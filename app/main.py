@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.config import CORS_ORIGINS, UPLOAD_DIR
-from app.database import init_db
+from app.database import init_db, close_db, check_db_health
 from app.routers import (
     auth,
     products,
@@ -23,16 +23,17 @@ from app.routers import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: ensure tables & initial data exist
-    init_db(seed_if_empty=True)
+    # Lifecycle: Initialize MongoDB connection pool & seeds
+    await init_db()
     yield
-    # Shutdown logic if any
+    # Cleanup: Close MongoDB client connection pool cleanly
+    await close_db()
 
 app = FastAPI(
     title="Dazzle by Dua - Fine Jewellery REST API",
     description="""
     Production-ready REST API backend for Dazzle by Dua luxury jewellery e-commerce platform.
-    Features:
+    MongoDB Integrated:
     - Products CRUD, stock toggle, variants & photography
     - Category management & auto product counters
     - Orders lifecycle, status pipeline & fulfillment tracking
@@ -48,7 +49,7 @@ app = FastAPI(
     - Live dashboard stats & inventory monitoring
     - Full store JSON database backup/export & restore
     """,
-    version="1.0.0",
+    version="1.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan
@@ -89,11 +90,17 @@ def root():
         "brand": "Dazzle by Dua",
         "tagline": "Fine Jewellery",
         "api_status": "Online & Operational",
-        "version": "1.0.0",
+        "database": "MongoDB (Motor)",
+        "version": "1.1.0",
         "documentation": "/docs",
         "redoc": "/redoc"
     }
 
 @app.get("/api/health", tags=["Health"])
-def health_check():
-    return {"status": "ok", "service": "dazzle-backend"}
+async def health_check():
+    db_health = await check_db_health()
+    return {
+        "status": "ok",
+        "service": "dazzle-backend",
+        "database": db_health
+    }

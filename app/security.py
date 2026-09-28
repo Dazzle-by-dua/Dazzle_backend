@@ -4,7 +4,7 @@ from fastapi import Depends, HTTPException, status, Header, Cookie
 from jose import JWTError, jwt
 import bcrypt
 from app.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
-from app.database import get_db
+from app.database import get_database
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
@@ -32,7 +32,7 @@ def decode_access_token(token: str) -> Optional[dict]:
     except JWTError:
         return None
 
-def get_current_admin(
+async def get_current_admin(
     authorization: Optional[str] = Header(None),
     admin_token: Optional[str] = Cookie(None)
 ) -> dict:
@@ -59,26 +59,24 @@ def get_current_admin(
     if not username:
         raise credentials_exception
 
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, username, email, name, role, created_at FROM admins WHERE username = ? OR email = ?", (username, username))
-        admin = cursor.fetchone()
-        if not admin:
-            raise credentials_exception
+    db = get_database()
+    admin = await db.admins.find_one({"$or": [{"username": username}, {"email": username}]})
+    if not admin:
+        raise credentials_exception
 
-        return {
-            "id": admin["id"],
-            "username": admin["username"],
-            "email": admin["email"],
-            "name": admin["name"],
-            "role": admin["role"]
-        }
+    return {
+        "id": admin.get("id", 1),
+        "username": admin["username"],
+        "email": admin["email"],
+        "name": admin["name"],
+        "role": admin["role"]
+    }
 
-def get_current_admin_optional(
+async def get_current_admin_optional(
     authorization: Optional[str] = Header(None),
     admin_token: Optional[str] = Cookie(None)
 ) -> Optional[dict]:
     try:
-        return get_current_admin(authorization, admin_token)
+        return await get_current_admin(authorization, admin_token)
     except HTTPException:
         return None

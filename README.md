@@ -11,10 +11,13 @@ A clean, modular, production-ready REST API backend engineered specifically for 
 
 ## ?? Key Capabilities & Features
 
-1. **100% Data Compatibility with Frontend**:
+1. **MongoDB Integration (Motor / PyMongo)**:
+   - Primary database using asynchronous `motor` driver.
+   - Centralized database connection pooling and graceful error handling.
+   - Built-in automatic seeding from `DEFAULT_*` jewellery catalogs on initial launch.
+   - Resilient fallback for local testing.
+2. **100% Data Compatibility with Frontend**:
    Matches all frontend keys and data structures: `products`, `categories`, `orders`, `reviews`, `offers`, `homepage`, `settings`, and `navigation`.
-2. **Real Persistence with SQLite**:
-   Full ACID transactions, WAL mode for high concurrency, auto-seeding with exact default jewellery catalog on initialization.
 3. **Products & Inventory Engine**:
    Full CRUD, stock toggles, pricing, discounts, finish variants, image galleries, and auto-calculating category counters.
 4. **Order Management & Fulfillment Tracking**:
@@ -42,27 +45,30 @@ A clean, modular, production-ready REST API backend engineered specifically for 
 
 ---
 
-## ?? Quick Start Guide
+## ?? Environment Variables
 
-### 1. Requirements
-- Python 3.10+ (tested and verified on Python 3.13)
-- Dependencies installed via `pip install -r requirements.txt`:
-  - `fastapi`, `uvicorn`, `pydantic`, `python-dotenv`, `python-jose`, `bcrypt`, `python-multipart`, `aiofiles`, `pytest`, `requests`, `httpx`
+Configure these in your environment or on Render (**Environment** tab):
 
-### 2. Run the Backend Server
-From the backend directory:
-```bash
-python run.py
-```
-Or directly using Uvicorn:
-```bash
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-```
+| Variable | Description | Example / Default |
+| :--- | :--- | :--- |
+| `MONGODB_URI` | MongoDB connection string (e.g. MongoDB Atlas) | `mongodb+srv://USERNAME:PASSWORD@cluster.mongodb.net/` |
+| `MONGODB_DB` | MongoDB database name | `dazzle_by_dua` |
+| `HOST` | Host IP binding (use `0.0.0.0` for cloud deployment) | `0.0.0.0` |
+| `PORT` | Web server listening port (Render sets `$PORT`) | `8000` |
+| `SECRET_KEY` | JWT signing secret key | `your_secure_jwt_secret_key_here` |
+| `ALGORITHM` | JWT signing algorithm | `HS256` |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Token validity duration | `1440` (24 hours) |
+| `CORS_ORIGINS` | Comma-separated list of allowed origins | `*` |
 
-The API will be available at:
-- Base API: `http://127.0.0.1:8000`
-- Swagger UI: `http://127.0.0.1:8000/docs`
-- Health Check: `http://127.0.0.1:8000/api/health`
+---
+
+## ?? Render Deployment Guide
+
+### Render Web Service Settings:
+- **Environment**: `Python`
+- **Build Command**: `pip install -r requirements.txt`
+- **Start Command**: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+- **Health Check Path**: `/api/health`
 
 ---
 
@@ -75,135 +81,10 @@ The API will be available at:
 
 ---
 
-## ?? API Endpoint Reference
-
-### 1. Authentication (`/api/auth`)
-| Method | Endpoint | Description | Protected |
-| :--- | :--- | :--- | :--- |
-| `POST` | `/api/auth/login` | Authenticate admin, returns JWT token & user profile | No |
-| `GET` | `/api/auth/me` | Get currently authenticated admin details | **Yes** |
-| `POST` | `/api/auth/logout` | Clear session and cookies | No |
-
-### 2. Products (`/api/products`)
-| Method | Endpoint | Description | Protected |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/products` | List all products (supports `?category=`, `?inStock=`, `?search=`, `?sort=`) | No |
-| `GET` | `/api/products/{id}` | Get product by ID | No |
-| `GET` | `/api/products/details/map` | Get product details map | No |
-| `POST` | `/api/products` | Create new product | **Yes** |
-| `PUT` | `/api/products/{id}` | Update product fields | **Yes** |
-| `PATCH`| `/api/products/{id}/stock` | Toggle in-stock status | **Yes** |
-| `DELETE`| `/api/products/{id}` | Delete product | **Yes** |
-
-### 3. Categories (`/api/categories`)
-| Method | Endpoint | Description | Protected |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/categories` | List all categories with live product count | No |
-| `GET` | `/api/categories/{id}` | Get category by ID | No |
-| `POST` | `/api/categories` | Add new category | **Yes** |
-| `PUT` | `/api/categories/{id}` | Update category | **Yes** |
-| `DELETE`| `/api/categories/{id}` | Delete category | **Yes** |
-
-### 4. Orders (`/api/orders`)
-| Method | Endpoint | Description | Protected |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/orders` | List orders (supports `?status=`, `?search=`) | No / Storefront |
-| `GET` | `/api/orders/{id}` | Get order details & tracking info | No / Storefront |
-| `POST` | `/api/orders` | Place new order (checkout) | No / Storefront |
-| `PATCH`| `/api/orders/{id}/status` | Update fulfillment status (`Processing`, `Shipped`, etc.) | **Yes** |
-| `DELETE`| `/api/orders/{id}` | Remove order | **Yes** |
-
-### 5. Customers (`/api/customers`)
-| Method | Endpoint | Description | Protected |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/customers` | Get customer analytics (order counts, lifetime spend) | **Yes** |
-| `GET` | `/api/customers/{email}` | Get customer profile and order history | **Yes** |
-
-### 6. Reviews (`/api/reviews`)
-| Method | Endpoint | Description | Protected |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/reviews` | List reviews (supports `?approved_only=true`, `?product=`) | No |
-| `POST` | `/api/reviews` | Submit new review | No / Storefront |
-| `PUT` | `/api/reviews/{id}` | Edit review text/rating | **Yes** |
-| `PATCH`| `/api/reviews/{id}/status` | Approve or hide review | **Yes** |
-| `DELETE`| `/api/reviews/{id}` | Delete review | **Yes** |
-
-### 7. Offers, Coupons & Combos (`/api/offers`)
-| Method | Endpoint | Description | Protected |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/offers` | Get all coupons and bundle combos | No |
-| `GET` | `/api/offers/coupons` | List coupons | No |
-| `POST` | `/api/offers/coupons` | Add new coupon | **Yes** |
-| `PUT` | `/api/offers/coupons/{id}` | Update coupon | **Yes** |
-| `DELETE`| `/api/offers/coupons/{id}` | Delete coupon | **Yes** |
-| `POST` | `/api/offers/coupons/validate` | Validate coupon code against cart total | No / Storefront |
-| `GET` | `/api/offers/combos` | List combos | No |
-| `POST` | `/api/offers/combos` | Add new combo | **Yes** |
-| `PUT` | `/api/offers/combos/{id}` | Update combo | **Yes** |
-| `DELETE`| `/api/offers/combos/{id}` | Delete combo | **Yes** |
-
-### 8. Homepage CMS (`/api/homepage`)
-| Method | Endpoint | Description | Protected |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/homepage` | Get configuration for all 9 homepage sections | No |
-| `PUT` | `/api/homepage` | Save complete homepage configuration | **Yes** |
-| `PATCH`| `/api/homepage/{section}` | Update specific section (`hero`, `announcement`, etc.) | **Yes** |
-
-### 9. Store Settings (`/api/settings`)
-| Method | Endpoint | Description | Protected |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/settings` | Get store settings, currency, contacts, social | No |
-| `PUT` | `/api/settings` | Save store settings | **Yes** |
-
-### 10. Navigation Menus (`/api/navigation`)
-| Method | Endpoint | Description | Protected |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/navigation` | Get header, footerQuick, footerCare links | No |
-| `PUT` | `/api/navigation` | Save entire navigation structure | **Yes** |
-| `POST` | `/api/navigation/{section}` | Add navigation link to section | **Yes** |
-| `DELETE`| `/api/navigation/{section}/{idx}`| Remove navigation link by index | **Yes** |
-
-### 11. Static Pages & Policies (`/api/pages`)
-| Method | Endpoint | Description | Protected |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/pages` | Get jewellery care guide, shipping terms, FAQs | No |
-| `PUT` | `/api/pages` | Update static pages content | **Yes** |
-
-### 12. Media Assets (`/api/media`)
-| Method | Endpoint | Description | Protected |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/media` | List media files with thumbnails, sizes and URLs | No |
-| `POST` | `/api/media/upload` | Upload image file (multipart/form-data) | **Yes** |
-| `DELETE`| `/api/media/{filename}` | Delete image file from server | **Yes** |
-
-### 13. Dashboard Analytics (`/api/dashboard`)
-| Method | Endpoint | Description | Protected |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/dashboard/stats` | Live revenue, order count breakdown, low stock | **Yes** |
-
-### 14. Database Backup & Restore (`/api/backup`)
-| Method | Endpoint | Description | Protected |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/backup/export` | Export complete database in DazzleStore JSON format | **Yes** |
-| `POST` | `/api/backup/import` | Restore complete database from backup JSON | **Yes** |
-| `POST` | `/api/backup/reset` | Factory reset database to initial default demo data | **Yes** |
-
----
-
-## ?? Connecting Frontend to API
-
-When you are ready to switch the frontend from localStorage to the backend:
-
-1. Add `<script src="dazzle_api_client.js"></script>` to your HTML files.
-2. The provided `client_adapter/dazzle_api_client.js` exposes `window.DazzleApi` with full Promise-based methods and `syncFromBackend()` method to instantly synchronize all local collections.
-3. Every CRUD action performed in the Admin Panel automatically updates the database and reflects in the customer storefront.
-
----
-
 ## ?? Testing
 
 Run the full automated test suite anytime:
 ```bash
 pytest tests/test_api.py -v
 ```
-All 10 test suites test end-to-end integration and verify zero regressions.
+*(All 10 integration test suites verify full database CRUD and synchronization).*

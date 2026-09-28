@@ -1,6 +1,4 @@
-import sys
-import io
-import json
+import asyncio
 import pytest
 from starlette.testclient import TestClient
 
@@ -11,18 +9,22 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def setup_db():
-    init_db()
-    reset_all_data()
+    asyncio.run(init_db())
+    asyncio.run(reset_all_data())
 
 # 1. Health & Root
 def test_root_and_health():
     res = client.get("/")
     assert res.status_code == 200
     assert res.json()["brand"] == "Dazzle by Dua"
+    assert "MongoDB" in res.json()["database"]
 
     res = client.get("/api/health")
     assert res.status_code == 200
-    assert res.json()["status"] == "ok"
+    data = res.json()
+    assert data["status"] == "ok"
+    assert "database" in data
+    assert data["database"]["connected"] is True
 
 # 2. Authentication
 def test_admin_auth_success_and_failure():
@@ -232,9 +234,9 @@ def test_cms_configurations():
     assert "announcement" in res_hp.json()
 
     # Update section
-    res_up_hp = client.patch("/api/homepage/announcement", json={"text": "Exclusive Diwali Sale Live Now!"}, headers=headers)
+    res_up_hp = client.patch("/api/homepage/announcement", json={"text": "Exclusive Holiday Sale Live Now!"}, headers=headers)
     assert res_up_hp.status_code == 200
-    assert res_up_hp.json()["announcement"]["text"] == "Exclusive Diwali Sale Live Now!"
+    assert res_up_hp.json()["announcement"]["text"] == "Exclusive Holiday Sale Live Now!"
 
     # Settings
     res_set = client.get("/api/settings")

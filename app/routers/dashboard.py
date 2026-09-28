@@ -1,110 +1,51 @@
-import json
 from fastapi import APIRouter, Depends
-from app.database import get_db
+from app.database import get_database, clean_docs
 from app.models.schemas import DashboardStatsOut
 from app.security import get_current_admin
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard Statistics"])
 
 @router.get("/stats", response_model=DashboardStatsOut)
-def get_dashboard_stats(admin: dict = Depends(get_current_admin)):
-    with get_db() as conn:
-        cursor = conn.cursor()
+async def get_dashboard_stats(admin: dict = Depends(get_current_admin)):
+    db = get_database()
 
-        # Orders stats & revenue
-        cursor.execute("SELECT total, status FROM orders;")
-        all_orders = cursor.fetchall()
-        total_orders = len(all_orders)
-        total_revenue = sum(float(o["total"] or 0) for o in all_orders if o["status"] != "Cancelled")
+    # Orders
+    all_orders = await db.orders.find({}).to_list(length=5000)
+    total_orders = len(all_orders)
+    total_revenue = sum(float(o.get("total") or 0) for o in all_orders if o.get("status") != "Cancelled")
+    recent_orders = clean_docs(await db.orders.find({}).sort("created_at", -1).limit(5).to_list(5))
 
-        # Products stats
-        cursor.execute("SELECT COUNT(*) FROM products;")
-        total_products = cursor.fetchone()[0]
+    # Products
+    total_products = await db.products.count_documents({})
+    out_of_stock_count = await db.products.count_documents({"inStock": False})
+    low_stock_prods = clean_docs(await db.products.find({"inStock": False}).limit(10).to_list(10))
 
-        cursor.execute("SELECT COUNT(*) FROM products WHERE inStock = 0;")
-        out_of_stock_count = cursor.fetchone()[0]
+    # Reviews
+    total_reviews = await db.reviews.count_documents({})
+    pending_reviews = await db.reviews.count_documents({"approved": False})
 
-        cursor.execute("SELECT * FROM products WHERE inStock = 0 LIMIT 10;")
-        low_stock_rows = cursor.fetchall()
-        low_stock_prods = []
-        for r in low_stock_rows:
-            low_stock_prods.append({
-                "id": r["id"],
-                "name": r["name"],
-                "price": r["price"],
-                "oldPrice": r["oldPrice"],
-                "category": r["category"],
-                "rating": r["rating"],
-                "reviews": r["reviews"],
-                "img": r["img"],
-                "badges": json.loads(r["badges"]) if r["badges"] else [],
-                "inStock": bool(r["inStock"]),
-                "sku": r["sku"],
-                "material": r["material"],
-                "dimensions": r["dimensions"],
-                "description": r["description"],
-                "variants": json.loads(r["variants"]) if r["variants"] else [],
-                "images": json.loads(r["images"]) if r["images"] else []
-            })
+    rev_docs = await db.reviews.find({}).to_list(length=1000)
+    if rev_docs:
+        avg_rating = round(sum(r.get("rating", 5) for r in rev_docs) / len(rev_docs), 1)
+    else:
+        avg_rating = 5.0
 
-        # Recent 5 orders
-        cursor.execute("SELECT * FROM orders ORDER BY created_at DESC LIMIT 5;")
-        recent_order_rows = cursor.fetchall()
-        recent_orders = []
-        for r in recent_order_rows:
-            recent_orders.append({
-                "id": r["id"],
-                "customer": r["customer"],
-                "email": r["email"],
-                "phone": r["phone"],
-                "date": r["date"],
-                "total": r["total"],
-                "status": r["status"],
-                "paymentMethod": r["paymentMethod"],
-                "address": r["address"],
-                "items": json.loads(r["items"]) if r["items"] else []
-            })
+    recent_reviews = clean_docs(await db.reviews.find({}).sort("id", -1).limit(5).to_list(5))
 
-        # Reviews stats
-        cursor.execute("SELECT COUNT(*) FROM reviews;")
-        total_reviews = cursor.fetchone()[0]
+    # Unique customers
+    unique_emails = set((o.get("email") or "").strip().lower() for o in all_orders if o.get("email"))
+    total_customers = len(unique_emails)
 
-        cursor.execute("SELECT COUNT(*) FROM reviews WHERE approved = 0;")
-        pending_reviews = cursor.fetchone()[0]
-
-        cursor.execute("SELECT AVG(rating) FROM reviews;")
-        avg_rating_val = cursor.fetchone()[0]
-        avg_rating = round(avg_rating_val, 1) if avg_rating_val else 5.0
-
-        cursor.execute("SELECT * FROM reviews ORDER BY id DESC LIMIT 5;")
-        recent_review_rows = cursor.fetchall()
-        recent_reviews = []
-        for r in recent_review_rows:
-            recent_reviews.append({
-                "id": r["id"],
-                "name": r["name"],
-                "rating": r["rating"],
-                "text": r["text"],
-                "date": r["date"],
-                "verified": bool(r["verified"]),
-                "approved": bool(r["approved"]),
-                "product": r["product"]
-            })
-
-        # Customers count (unique emails)
-        cursor.execute("SELECT COUNT(DISTINCT LOWER(email)) FROM orders;")
-        total_customers = cursor.fetchone()[0]
-
-        return {
-            "totalRevenue": total_revenue,
-            "totalOrders": total_orders,
-            "totalProducts": total_products,
-            "outOfStockCount": out_of_stock_count,
-            "totalReviews": total_reviews,
-            "pendingReviews": pending_reviews,
-            "avgRating": avg_rating,
-            "totalCustomers": total_customers,
-            "recentOrders": recent_orders,
-            "lowStockProducts": low_stock_prods,
-            "recentReviews": recent_reviews
-        }
+    return {
+        "totalRevenue": total_revenue,
+        "totalOrders": total_orders,
+        "totalProducts": total_products,
+        "outOfStockCount": out_of_stock_count,
+        "totalReviews": total_reviews,
+        "pendingReviews": pending_reviews,
+        "avgRating": avg_rating,
+        "totalCustomers": total_customers,
+        "recentOrders": recent_orders,
+        "lowStockProducts": low_stock_prods,
+        "recentReviews": recent_reviews
+    }
