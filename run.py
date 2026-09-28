@@ -1,7 +1,9 @@
+import os
 import uvicorn
-from app.config import HOST, PORT
 
 if __name__ == "__main__":
-    print(f"Starting Dazzle by Dua API server at http://{HOST}:{PORT}")
-    print(f"Interactive Swagger documentation available at http://{HOST}:{PORT}/docs")
-    uvicorn.run("app.main:app", host=HOST, port=PORT, reload=True)
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "8000"))
+    print(f"Starting Dazzle by Dua API server at http://{host}:{port}")
+    print(f"Interactive Swagger documentation available at http://{host}:{port}/docs")
+    uvicorn.run("main:app", host=host, port=port, reload=False)

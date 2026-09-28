@@ -12,8 +12,8 @@ SECRET_KEY = os.getenv("SECRET_KEY", "dazzle_fine_jewellery_dua_jwt_secret_key_2
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24 hours
 
-# Server Host & Port
-HOST = os.getenv("HOST", "127.0.0.1")
+# Server Host & Port (0.0.0.0 allows binding across cloud hosts like Render)
+HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 
 # CORS
