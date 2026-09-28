@@ -1,9 +1,13 @@
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Base Paths
 BASE_DIR = Path(__file__).resolve().parent.parent
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", str(BASE_DIR / "uploads")))
+
+# Automatically load variables from .env
+load_dotenv(BASE_DIR / ".env")
 
 # MongoDB Settings
 MONGODB_URI = os.getenv("MONGODB_URI", "")
