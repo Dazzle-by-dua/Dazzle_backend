@@ -7,10 +7,18 @@ from app.database import init_db, reset_all_data
 
 client = TestClient(app)
 
+@pytest.fixture(scope="session", autouse=True)
+def app_lifespan():
+    with client:
+        yield
+
 @pytest.fixture(autouse=True)
-def setup_db():
-    asyncio.run(init_db())
-    asyncio.run(reset_all_data())
+def reset_db_between_tests():
+    login_res = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+    if login_res.status_code == 200:
+        token = login_res.json().get("token")
+        if token:
+            client.post("/api/backup/reset", headers={"Authorization": f"Bearer {token}"})
 
 # 1. Health & Root
 def test_root_and_health():

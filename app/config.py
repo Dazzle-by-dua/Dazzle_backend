@@ -10,8 +10,8 @@ UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", str(BASE_DIR / "uploads")))
 load_dotenv(BASE_DIR / ".env")
 
 # MongoDB Settings
-MONGODB_URI = os.getenv("MONGODB_URI", "")
-MONGODB_DB = os.getenv("MONGODB_DB", "dazzle_by_dua")
+MONGODB_URI = os.getenv("MONGODB_URI", "").strip()
+MONGODB_DB = (os.getenv("MONGODB_DB") or "dazzle_by_dua").strip()
 
 # Security & JWT
 SECRET_KEY = os.getenv("SECRET_KEY", "dazzle_fine_jewellery_dua_jwt_secret_key_2025_prod_secure")

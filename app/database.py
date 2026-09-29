@@ -1,4 +1,5 @@
 import os
+import re
 import datetime
 import logging
 from typing import Optional, Dict, Any, List
@@ -18,6 +19,10 @@ from app.seed_data import (
 )
 
 logger = logging.getLogger("dazzle.database")
+
+def _sanitize_error(msg: Any) -> str:
+    """Mask any MongoDB credentials or sensitive URI patterns from messages."""
+    return re.sub(r'mongodb(?:\+srv)?://[^@\s]+@', 'mongodb+srv://***:***@', str(msg))
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
@@ -43,14 +48,17 @@ class DatabaseManager:
     async def connect(self):
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         if MONGODB_URI:
+            print("MongoDB configuration detected")
+            logger.info("MongoDB configuration detected")
+            print(f"MongoDB database: {MONGODB_DB}")
+            logger.info(f"MongoDB database: {MONGODB_DB}")
             try:
                 from motor.motor_asyncio import AsyncIOMotorClient
-                logger.info(f"Connecting to MongoDB cluster for database '{MONGODB_DB}'...")
                 self.client = AsyncIOMotorClient(
                     MONGODB_URI,
-                    serverSelectionTimeoutMS=3000,
-                    connectTimeoutMS=3000,
-                    socketTimeoutMS=5000,
+                    serverSelectionTimeoutMS=5000,
+                    connectTimeoutMS=5000,
+                    socketTimeoutMS=10000,
                     maxPoolSize=50,
                     minPoolSize=5
                 )
@@ -59,19 +67,27 @@ class DatabaseManager:
                 self.is_connected = True
                 self.is_mock = False
                 self.connection_error = None
-                logger.info(f"Successfully connected to MongoDB cluster ({MONGODB_DB})")
+                print("MongoDB connection successful")
+                logger.info("MongoDB connection successful")
             except Exception as e:
                 self.is_connected = False
-                self.connection_error = str(e)
-                logger.warning(f"MongoDB cluster ping failed on startup: {e}. API will continue running and retry on subsequent requests.")
+                safe_err = _sanitize_error(e)
+                self.connection_error = safe_err
+                print(f"MongoDB connection failed: {safe_err}")
+                logger.error(f"MongoDB connection failed: {safe_err}")
         else:
-            logger.info("MONGODB_URI not provided. Running in resilient local in-memory mode.")
+            print("MongoDB configuration detected: None (URI not provided)")
+            logger.warning("MongoDB configuration detected: None (URI not provided)")
+            print(f"MongoDB database: {MONGODB_DB}")
+            logger.info(f"MongoDB database: {MONGODB_DB}")
             from mongomock_motor import AsyncMongoMockClient
             self.client = AsyncMongoMockClient()
             self.db = self.client[MONGODB_DB]
-            self.is_connected = True
+            self.is_connected = False
             self.is_mock = True
-            self.connection_error = None
+            self.connection_error = "MONGODB_URI not provided"
+            print("MongoDB connection failed: MONGODB_URI not provided")
+            logger.warning("MongoDB connection failed: MONGODB_URI not provided")
 
         if self.is_connected or self.is_mock:
             try:
@@ -79,7 +95,7 @@ class DatabaseManager:
                 await self._seed_defaults_if_needed()
                 await self.sync_category_counts()
             except Exception as e:
-                logger.warning(f"Initial index/seed skipped due to database status: {e}")
+                logger.warning(f"Initial index/seed skipped: {_sanitize_error(e)}")
 
     async def close(self):
         if self.client:
@@ -88,36 +104,51 @@ class DatabaseManager:
             logger.info("MongoDB client connection pool closed.")
 
     async def check_health(self) -> Dict[str, Any]:
-        if self.is_mock:
-            return {
-                "status": "connected",
-                "connected": True,
-                "database": MONGODB_DB,
-                "mode": "mock/local"
-            }
-        if self.client:
+        if not self.client and MONGODB_URI:
             try:
-                await self.client.admin.command("ping")
-                self.is_connected = True
-                return {
-                    "status": "connected",
-                    "connected": True,
-                    "database": MONGODB_DB
-                }
+                from motor.motor_asyncio import AsyncIOMotorClient
+                self.client = AsyncIOMotorClient(
+                    MONGODB_URI,
+                    serverSelectionTimeoutMS=5000,
+                    connectTimeoutMS=5000,
+                    socketTimeoutMS=10000,
+                    maxPoolSize=50,
+                    minPoolSize=5
+                )
+                self.db = self.client[MONGODB_DB]
             except Exception as e:
                 self.is_connected = False
                 return {
                     "status": "disconnected",
                     "connected": False,
                     "database": MONGODB_DB,
-                    "error": str(e)
+                    "error": _sanitize_error(e)
                 }
-        return {
-            "status": "disconnected",
-            "connected": False,
-            "database": MONGODB_DB,
-            "error": self.connection_error or "Database client not initialized"
-        }
+
+        if not self.client or self.is_mock:
+            return {
+                "status": "disconnected",
+                "connected": False,
+                "database": MONGODB_DB,
+                "error": self.connection_error or "MongoDB not configured"
+            }
+
+        try:
+            await self.client.admin.command("ping")
+            self.is_connected = True
+            return {
+                "status": "connected",
+                "connected": True,
+                "database": MONGODB_DB
+            }
+        except Exception as e:
+            self.is_connected = False
+            return {
+                "status": "disconnected",
+                "connected": False,
+                "database": MONGODB_DB,
+                "error": _sanitize_error(e)
+            }
 
     def get_db(self):
         if self.db is None:
