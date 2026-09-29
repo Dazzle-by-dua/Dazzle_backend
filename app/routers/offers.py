@@ -24,6 +24,26 @@ async def get_all_offers():
     combos = await db.combos.find({}).to_list(length=100)
     return {"coupons": clean_docs(coupons), "combos": clean_docs(combos)}
 
+@router.put("", response_model=OffersOut)
+async def update_all_offers(payload: dict, admin: dict = Depends(get_current_admin)):
+    db = get_database()
+    coupons = payload.get("coupons", [])
+    combos = payload.get("combos", [])
+    if coupons:
+        await db.coupons.delete_many({})
+        for c in coupons:
+            c_doc = {k: v for k, v in c.items() if k != "_id"}
+            await db.coupons.insert_one(c_doc)
+    if combos:
+        await db.combos.delete_many({})
+        for cb in combos:
+            cb_doc = {k: v for k, v in cb.items() if k != "_id"}
+            await db.combos.insert_one(cb_doc)
+    fresh_coupons = await db.coupons.find({}).to_list(100)
+    fresh_combos = await db.combos.find({}).to_list(100)
+    return {"coupons": clean_docs(fresh_coupons), "combos": clean_docs(fresh_combos)}
+
+
 # Coupons Endpoints
 @router.get("/coupons", response_model=List[CouponOut])
 async def get_coupons():
