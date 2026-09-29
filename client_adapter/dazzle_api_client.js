@@ -15,9 +15,11 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
+  const API_BASE_URL = "https://dazzle-backend-69un.onrender.com";
+
   // Default API configuration
   const API_CONFIG = {
-    BASE_URL: "http://127.0.0.1:8000",
+    BASE_URL: API_BASE_URL,
     STORAGE_AUTH_KEY: "dazzle_admin_session",
     TIMEOUT_MS: 10000
   };
