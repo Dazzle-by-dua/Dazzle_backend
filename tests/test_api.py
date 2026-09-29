@@ -19,9 +19,17 @@ def test_root_and_health():
     assert res.json()["brand"] == "Dazzle by Dua"
     assert "MongoDB" in res.json()["database"]
 
-    res = client.get("/api/health")
-    assert res.status_code == 200
-    data = res.json()
+    # Production GET /health endpoint
+    res_health = client.get("/health")
+    assert res_health.status_code == 200
+    health_json = res_health.json()
+    assert health_json["status"] == "ok"
+    assert health_json["database"] == "connected"
+
+    # Extended GET /api/health
+    res_api_health = client.get("/api/health")
+    assert res_api_health.status_code == 200
+    data = res_api_health.json()
     assert data["status"] == "ok"
     assert "database" in data
     assert data["database"]["connected"] is True

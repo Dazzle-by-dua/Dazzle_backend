@@ -90,35 +90,33 @@ class DatabaseManager:
     async def check_health(self) -> Dict[str, Any]:
         if self.is_mock:
             return {
-                "status": "ready (mock/local mode)",
+                "status": "connected",
                 "connected": True,
                 "database": MONGODB_DB,
-                "is_mock": True,
-                "message": "MONGODB_URI is not set; running in local resilient mock mode."
+                "mode": "mock/local"
             }
-        if self.is_connected and self.client:
+        if self.client:
             try:
                 await self.client.admin.command("ping")
+                self.is_connected = True
                 return {
                     "status": "connected",
                     "connected": True,
-                    "database": MONGODB_DB,
-                    "is_mock": False
+                    "database": MONGODB_DB
                 }
             except Exception as e:
+                self.is_connected = False
                 return {
-                    "status": "error",
+                    "status": "disconnected",
                     "connected": False,
                     "database": MONGODB_DB,
-                    "error": str(e),
-                    "is_mock": False
+                    "error": str(e)
                 }
         return {
             "status": "disconnected",
             "connected": False,
             "database": MONGODB_DB,
-            "error": self.connection_error or "Not connected",
-            "is_mock": False
+            "error": self.connection_error or "Database client not initialized"
         }
 
     def get_db(self):

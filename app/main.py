@@ -96,8 +96,19 @@ def root():
         "redoc": "/redoc"
     }
 
+@app.get("/health", tags=["Health"])
+async def health():
+    """Production health-check endpoint reporting server & MongoDB connection status"""
+    db_health = await check_db_health()
+    db_status = "connected" if db_health.get("connected", False) else "disconnected"
+    return {
+        "status": "ok",
+        "database": db_status
+    }
+
 @app.get("/api/health", tags=["Health"])
 async def health_check():
+    """Extended health check with detailed database metrics"""
     db_health = await check_db_health()
     return {
         "status": "ok",
