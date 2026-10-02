@@ -26,6 +26,10 @@ from app.routers import (
 async def lifespan(app: FastAPI):
     # Lifecycle: Initialize MongoDB connection pool & seeds
     await init_db()
+    # Lifecycle: Verify Cloudinary configuration & connection
+    import asyncio
+    from app.cloudinary_service import verify_cloudinary_connection
+    await asyncio.to_thread(verify_cloudinary_connection)
     yield
     # Cleanup: Close MongoDB client connection pool cleanly
     await close_db()
@@ -110,10 +114,19 @@ async def health():
 
 @app.get("/api/health", tags=["Health"])
 async def health_check():
-    """Extended health check with detailed database metrics"""
+    """Extended health check with detailed database metrics and Cloudinary service status"""
+    from app.cloudinary_service import get_cloudinary_health
     db_health = await check_db_health()
+    cloud_health = get_cloudinary_health()
     return {
         "status": "ok",
         "service": "dazzle-backend",
-        "database": db_health
+        "database": db_health,
+        "cloudinary": cloud_health
     }
+
+@app.get("/api/health/cloudinary", tags=["Health"])
+async def cloudinary_health():
+    """Dedicated Cloudinary connection & configuration health check"""
+    from app.cloudinary_service import get_cloudinary_health
+    return get_cloudinary_health()

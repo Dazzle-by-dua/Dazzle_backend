@@ -8,7 +8,8 @@ from app.security import get_current_admin
 from app.cloudinary_service import (
     is_cloudinary_configured,
     upload_image_to_cloudinary,
-    delete_image_from_cloudinary
+    delete_image_from_cloudinary,
+    get_cloudinary_health
 )
 
 router = APIRouter(prefix="/api/upload", tags=["Cloudinary Upload"])
@@ -18,12 +19,14 @@ class DeleteImageRequest(BaseModel):
 
 @router.get("/status")
 async def get_upload_status():
-    """Check if Cloudinary image upload system is configured."""
-    configured = is_cloudinary_configured()
+    """Check if Cloudinary image upload system is configured and verified."""
+    health = get_cloudinary_health()
     return {
-        "status": "ready" if configured else "unconfigured",
-        "cloudinary_configured": configured,
-        "storage": "cloudinary" if configured else "not_configured"
+        "status": health["status"],
+        "cloudinary_configured": health["configured"],
+        "cloudinary_verified": health["verified"],
+        "cloud_name": health["cloud_name"],
+        "storage": "cloudinary" if health["verified"] else ("unverified" if health["configured"] else "not_configured")
     }
 
 @router.post("/image")
