@@ -35,7 +35,7 @@ DEFAULT_PRODUCTS = [
         "sku": "DBD-NC-001",
         "material": "18K Champagne Gold Vermeil & Natural Freshwater Pearl",
         "dimensions": "Pendant 18mm x 18mm | Chain length: 42cm + 5cm extension",
-        "description": "An ode to blooming elegance, this Flower Pendant Necklace features delicately sculpted petals set with shimmering pav? accents, culminating in a radiant freshwater pearl at the center. Hand-crafted and finished in our signature 18K champagne gold vermeil.",
+        "description": "An ode to blooming elegance, this Flower Pendant Necklace features delicately sculpted petals set with shimmering pavé accents, culminating in a radiant freshwater pearl at the center. Hand-crafted and finished in our signature 18K champagne gold vermeil.",
         "variants": ["18K Champagne Gold", "Rose Gold Vermeil", "Sterling Silver"],
         "images": ["product_flower_necklace.jpg", "hero_necklace.jpg", "featured_collection.jpg"]
     },
@@ -125,7 +125,7 @@ DEFAULT_PRODUCTS = [
         "sku": "DBD-NC-006",
         "material": "18K Champagne Gold Vermeil",
         "dimensions": "Chain: 40cm + 5cm extension | Pendant: 12mm",
-        "description": "Dainty celestial motif adorned with fine micropav? stones on a slender cable chain. Adds a celestial glow to your collarbone.",
+        "description": "Dainty celestial motif adorned with fine micropavé stones on a slender cable chain. Adds a celestial glow to your collarbone.",
         "variants": ["18K Champagne Gold", "Sterling Silver"],
         "images": ["product_flower_necklace.jpg", "hero_necklace.jpg", "featured_collection.jpg"]
     },
@@ -179,7 +179,7 @@ DEFAULT_REVIEWS = [
     {"id": 2, "name": "Priya M.", "rating": 5, "text": "Absolutely love my pearl earrings. They are so delicate and elegant. Will definitely order again!", "date": "5 Feb 2025", "verified": True, "approved": True, "product": "Pearl Drop Earrings"},
     {"id": 3, "name": "Nadia R.", "rating": 4, "text": "Beautiful bracelet, perfect gift for my sister. The champagne gold finish is exactly as shown.", "date": "20 Mar 2025", "verified": True, "approved": True, "product": "Delicate Chain Bracelet"},
     {"id": 4, "name": "Sarah L.", "rating": 5, "text": "Dazzle by Dua is my go-to for jewellery! The quality is premium and the designs are timeless.", "date": "8 Apr 2025", "verified": True, "approved": True, "product": "Flower Pendant Necklace"},
-    {"id": 5, "name": "Fatima Z.", "rating": 5, "text": "Ordered the ring and it arrived in gorgeous packaging. The detail is exquisite ? absolutely stunning!", "date": "15 May 2025", "verified": True, "approved": True, "product": "Minimal Diamond Ring"},
+    {"id": 5, "name": "Fatima Z.", "rating": 5, "text": "Ordered the ring and it arrived in gorgeous packaging. The detail is exquisite — absolutely stunning!", "date": "15 May 2025", "verified": True, "approved": True, "product": "Minimal Diamond Ring"},
     {"id": 6, "name": "Maha B.", "rating": 4, "text": "Very happy with my purchase. The earrings are lightweight and comfortable for all-day wear.", "date": "2 Jun 2025", "verified": True, "approved": True, "product": "Gold Hoop Earrings"}
 ]
 
@@ -223,16 +223,16 @@ DEFAULT_OFFERS = {
 DEFAULT_HOMEPAGE = {
     "announcement": {
         "enabled": True,
-        "text": "Free shipping on orders above ?2,500 | Use code DAZZLE10 for 10% off",
-        "linkText": "View Offers ?",
+        "text": "Free shipping on orders above ₹2,500 | Use code DAZZLE10 for 10% off",
+        "linkText": "View Offers →",
         "linkUrl": "offers.html"
     },
     "hero": {
         "enabled": True,
-        "tag": "? New Collection 2025",
+        "tag": "✦ New Collection 2026",
         "title": "Jewellery That <em>Tells</em><br>Your Story",
         "desc": "Discover pieces made to be remembered. Crafted with love, worn with grace.",
-        "btn1Text": "Shop Collection ?",
+        "btn1Text": "Shop Collection →",
         "btn1Url": "shop.html",
         "btn2Text": "View Offers",
         "btn2Url": "offers.html",
@@ -253,15 +253,15 @@ DEFAULT_HOMEPAGE = {
         "enabled": True,
         "tag": "Our Featured Collection",
         "title": "Grace in <em>Every</em> Detail",
-        "desc": "Thoughtfully designed, beautifully crafted ? our collection brings elegance to your everyday and special moments. Each piece tells a story of timeless beauty.",
+        "desc": "Thoughtfully designed, beautifully crafted — our collection brings elegance to your everyday and special moments. Each piece tells a story of timeless beauty.",
         "img": "featured_collection.jpg",
-        "btnText": "Explore Collection ?",
+        "btnText": "Explore Collection →",
         "btnUrl": "shop.html",
         "stat1Num": "500+",
         "stat1Label": "Happy Customers",
         "stat2Num": "50+",
         "stat2Label": "Unique Designs",
-        "stat3Num": "4.8?",
+        "stat3Num": "4.8★",
         "stat3Label": "Avg. Rating"
     },
     "whyChooseUs": {
@@ -291,7 +291,7 @@ DEFAULT_HOMEPAGE = {
     "footer": {
         "enabled": True,
         "tagline": "Timeless pieces, crafted with love.<br>For your most beautiful moments.",
-        "copyright": "? 2025 Dazzle by Dua. All rights reserved."
+        "copyright": "© 2025 Dazzle by Dua. All rights reserved."
     }
 }
 
@@ -347,7 +347,7 @@ DEFAULT_SETTINGS = {
     "email": "contact@dazzlebydua.com",
     "phone": "+91 98765 43210",
     "address": "Shop 4, Luxury Arcade, Bandra West, Mumbai, MH 400050",
-    "currency": "?",
+    "currency": "₹",
     "freeShippingThreshold": 2500,
     "logoText": "Dazzle by Dua",
     "social": {
@@ -391,7 +391,7 @@ DEFAULT_PAGES = {
     "terms_conditions": "All designs, jewellery imagery, and branding are the exclusive property of Dazzle by Dua. Prices and promotions are subject to change without notice.",
     "faqs": [
         {"q": "How do I care for my gold vermeil jewellery?", "a": "Avoid direct contact with water, perfume, lotions, and harsh chemicals. Store in your Dazzle pouch."},
-        {"q": "What are the shipping charges and delivery timelines?", "a": "We offer complimentary express shipping on all orders above ?2,500. Delivery takes 3-5 business days across India."},
+        {"q": "What are the shipping charges and delivery timelines?", "a": "We offer complimentary express shipping on all orders above ₹2,500. Delivery takes 3-5 business days across India."},
         {"q": "What is your return & exchange policy?", "a": "We accept returns and exchanges within 7 days of delivery for unworn items in original packaging."}
     ]
 }
