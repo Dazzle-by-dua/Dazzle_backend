@@ -187,11 +187,19 @@ class OrderCreate(BaseModel):
     total: float
     status: Optional[str] = "Processing"
     paymentMethod: Optional[str] = "Cash on Delivery"
+    paymentStatus: Optional[str] = "Pending"
     address: Optional[str] = None
     items: List[OrderItem] = Field(default_factory=list)
+    razorpay_order_id: Optional[str] = None
+    razorpay_payment_id: Optional[str] = None
+    razorpay_signature: Optional[str] = None
+    currency: Optional[str] = "INR"
+    paid_at: Optional[str] = None
+    notes: Optional[str] = None
 
 class OrderStatusUpdate(BaseModel):
     status: str
+    paymentStatus: Optional[str] = None
 
 class OrderOut(BaseModel):
     id: str
@@ -202,8 +210,37 @@ class OrderOut(BaseModel):
     total: float
     status: str
     paymentMethod: str
+    paymentStatus: Optional[str] = "Pending"
     address: Optional[str] = None
     items: List[OrderItem] = Field(default_factory=list)
+    razorpay_order_id: Optional[str] = None
+    razorpay_payment_id: Optional[str] = None
+    currency: Optional[str] = "INR"
+    paid_at: Optional[str] = None
+    notes: Optional[str] = None
+
+class RazorpayOrderCreateRequest(BaseModel):
+    items: List[OrderItem]
+    customer: str
+    email: str
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    notes: Optional[str] = None
+    coupon_code: Optional[str] = None
+
+class RazorpayPaymentVerifyRequest(BaseModel):
+    order_id: str
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+
+class RazorpayPaymentFailedRequest(BaseModel):
+    order_id: str
+    razorpay_order_id: Optional[str] = None
+    razorpay_payment_id: Optional[str] = None
+    error_code: Optional[str] = None
+    error_description: Optional[str] = None
+    error_reason: Optional[str] = None
 
 # ========================================================
 # 6. Customer Schemas
