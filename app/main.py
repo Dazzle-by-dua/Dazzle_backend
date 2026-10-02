@@ -17,6 +17,7 @@ from app.routers import (
     navigation,
     pages,
     media,
+    upload,
     dashboard,
     backup
 )
@@ -81,6 +82,7 @@ app.include_router(settings.router)
 app.include_router(navigation.router)
 app.include_router(pages.router)
 app.include_router(media.router)
+app.include_router(upload.router)
 app.include_router(dashboard.router)
 app.include_router(backup.router)
 

@@ -25,3 +25,9 @@ PORT = int(os.getenv("PORT", "8000"))
 # CORS
 cors_raw = os.getenv("CORS_ORIGINS", "*")
 CORS_ORIGINS = [orig.strip() for orig in cors_raw.split(",") if orig.strip()]
+
+# Cloudinary Image Storage
+CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME", "").strip()
+CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY", "").strip()
+CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET", "").strip()
+CLOUDINARY_URL = os.getenv("CLOUDINARY_URL", "").strip()
