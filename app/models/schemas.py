@@ -172,11 +172,12 @@ class ValidateCouponResponse(BaseModel):
 # ========================================================
 class OrderItem(BaseModel):
     id: Union[int, str]
-    name: str
-    price: float
+    name: Optional[str] = "Jewellery Item"
+    price: Optional[float] = 0.0
     qty: int = 1
     variant: Optional[str] = None
     img: Optional[str] = None
+
 
 class OrderCreate(BaseModel):
     id: Optional[str] = None

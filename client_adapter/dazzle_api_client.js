@@ -186,8 +186,24 @@
       },
       async delete(id) {
         return await request(`/api/orders/${id}`, { method: "DELETE" });
+      },
+      async createRazorpayOrder(payload) {
+        return await request("/api/orders/razorpay/create-order", { method: "POST", body: payload });
+      },
+      async verifyRazorpayPayment(payload) {
+        return await request("/api/orders/razorpay/verify", { method: "POST", body: payload });
+      },
+      async recordPaymentFailure(payload) {
+        return await request("/api/orders/razorpay/payment-failed", { method: "POST", body: payload });
+      },
+      async getPaymentStatus(orderId) {
+        return await request(`/api/orders/${orderId}/payment-status`);
+      },
+      async getRazorpayConfig() {
+        return await request("/api/orders/razorpay/config");
       }
     },
+
 
     // Customers
     customers: {

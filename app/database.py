@@ -179,6 +179,9 @@ class DatabaseManager:
             await self.db.products.create_index("category")
             await self.db.categories.create_index("id", unique=True)
             await self.db.orders.create_index("id", unique=True)
+            await self.db.orders.create_index("razorpay_order_id")
+            await self.db.orders.create_index("razorpay_payment_id")
+            await self.db.processed_webhooks.create_index("event_id", unique=True)
             await self.db.reviews.create_index("id", unique=True)
             await self.db.coupons.create_index("code", unique=True)
             await self.db.combos.create_index("id", unique=True)
@@ -546,5 +549,7 @@ async def reset_all_data():
     await db.navigation.delete_many({})
     await db.pages.delete_many({})
     await db.media.delete_many({})
+    await db.processed_webhooks.delete_many({})
     await db_manager._seed_defaults_if_needed()
     await db_manager.sync_category_counts()
+

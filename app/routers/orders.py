@@ -1,8 +1,12 @@
 import random
+import logging
 import datetime
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query, Depends
 from app.database import get_database, clean_doc, clean_docs
+
+logger = logging.getLogger("dazzle.orders")
+
 from app.models.schemas import (
     OrderOut,
     OrderCreate,
@@ -25,6 +29,7 @@ router = APIRouter(prefix="/api/orders", tags=["Orders"])
 async def calculate_trusted_order_total(db, items: list, coupon_code: Optional[str] = None):
     """
     Calculate subtotal, discount, shipping, and total from trusted MongoDB product prices.
+    Strictly validates product existence, availability, and positive quantities.
     Returns (trusted_total, subtotal, discount, verified_items_list).
     """
     subtotal = 0.0
@@ -33,25 +38,39 @@ async def calculate_trusted_order_total(db, items: list, coupon_code: Optional[s
     for it in items:
         item_dict = it.model_dump() if hasattr(it, "model_dump") else dict(it)
         pid = item_dict.get("id")
-        qty = max(1, int(item_dict.get("qty", 1)))
+        if pid is None:
+            raise HTTPException(status_code=400, detail="Product ID is required for each item.")
 
-        # Lookup true price from MongoDB products collection
+        raw_qty = item_dict.get("qty", 1)
+        try:
+            qty = int(raw_qty)
+            if qty < 1:
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail=f"Quantity for product ID '{pid}' must be a positive integer.")
+
+        # Lookup true price & availability from MongoDB products collection
         product = None
-        if pid is not None:
-            try:
-                numeric_id = int(pid)
-                product = await db.products.find_one({"id": numeric_id})
-            except (ValueError, TypeError):
-                product = await db.products.find_one({"id": str(pid)})
+        try:
+            numeric_id = int(pid)
+            product = await db.products.find_one({"id": numeric_id})
+        except (ValueError, TypeError):
+            pass
+        if not product:
+            product = await db.products.find_one({"id": str(pid)})
 
-        if product and "price" in product:
-            trusted_price = float(product["price"])
-            item_name = product.get("name", item_dict.get("name", "Jewellery Item"))
-            item_img = product.get("img", item_dict.get("img", ""))
-        else:
-            trusted_price = max(0.0, float(item_dict.get("price", 0.0)))
-            item_name = item_dict.get("name", "Jewellery Item")
-            item_img = item_dict.get("img", "")
+        if not product:
+            raise HTTPException(status_code=400, detail=f"Product with ID '{pid}' does not exist.")
+
+        if not product.get("inStock", True):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Product '{product.get('name', pid)}' is currently out of stock."
+            )
+
+        trusted_price = float(product.get("price", 0.0))
+        item_name = product.get("name", item_dict.get("name", "Jewellery Item"))
+        item_img = product.get("img", item_dict.get("img", ""))
 
         line_total = trusted_price * qty
         subtotal += line_total
@@ -89,6 +108,7 @@ async def calculate_trusted_order_total(db, items: list, coupon_code: Optional[s
 
     total = max(0.0, round(subtotal - discount + shipping_fee, 2))
     return total, subtotal, discount, verified_items
+
 
 # ========================================================
 # Razorpay Integration Endpoints (Declared before /{order_id})
@@ -176,6 +196,7 @@ async def create_razorpay_order_endpoint(payload: RazorpayOrderCreateRequest):
         }
     }
 
+@router.post("/razorpay/verify")
 @router.post("/razorpay/verify-payment")
 async def verify_razorpay_payment_endpoint(payload: RazorpayPaymentVerifyRequest):
     """
@@ -203,7 +224,11 @@ async def verify_razorpay_payment_endpoint(payload: RazorpayPaymentVerifyRequest
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
 
-    # 3. Prevent duplicate payment confirmation
+    # Confirm razorpay_order_id matches
+    if order.get("razorpay_order_id") and order.get("razorpay_order_id") != payload.razorpay_order_id:
+        raise HTTPException(status_code=400, detail="Razorpay order ID mismatch with internal order.")
+
+    # 3. Prevent duplicate payment confirmation (Idempotent response)
     if order.get("paymentStatus") == "Paid":
         return {
             "success": True,
@@ -214,8 +239,19 @@ async def verify_razorpay_payment_endpoint(payload: RazorpayPaymentVerifyRequest
     # 4. Fetch verified payment details from Razorpay API
     pay_details = fetch_payment_details(payload.razorpay_payment_id)
     payment_method_label = "Razorpay Online"
-    if pay_details and pay_details.get("method"):
-        payment_method_label = f"Razorpay ({pay_details['method'].upper()})"
+    if pay_details:
+        if pay_details.get("method"):
+            payment_method_label = f"Razorpay ({pay_details['method'].upper()})"
+
+        # Verify amount & currency if details are available
+        paid_amount = float(pay_details.get("amount", 0.0))
+        expected_amount = float(order.get("total", 0.0))
+        if paid_amount > 0 and abs(expected_amount - paid_amount) > 0.01:
+            logger.error(f"Payment amount mismatch for order {order['id']}: expected {expected_amount}, got {paid_amount}")
+            raise HTTPException(status_code=400, detail="Payment amount mismatch between gateway and internal order.")
+
+        if pay_details.get("currency") and pay_details["currency"].upper() != "INR":
+            raise HTTPException(status_code=400, detail="Payment currency mismatch.")
 
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     await db.orders.update_one(
@@ -246,14 +282,22 @@ async def verify_razorpay_payment_endpoint(payload: RazorpayPaymentVerifyRequest
 async def record_payment_failure_endpoint(payload: RazorpayPaymentFailedRequest):
     """
     Record payment failure or cancellation without incorrectly marking order as paid.
+    Never overwrites an already-confirmed 'Paid' status.
     """
     db = get_database()
     order = await db.orders.find_one({"id": payload.order_id})
     if not order and payload.razorpay_order_id:
         order = await db.orders.find_one({"razorpay_order_id": payload.razorpay_order_id})
 
+    if order and order.get("paymentStatus") == "Paid":
+        return {
+            "success": True,
+            "message": "Order is already paid; payment failure ignored.",
+            "order_id": order["id"]
+        }
+
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    if order and order.get("paymentStatus") != "Paid":
+    if order:
         await db.orders.update_one(
             {"id": order["id"]},
             {
@@ -275,6 +319,33 @@ async def record_payment_failure_endpoint(payload: RazorpayPaymentFailedRequest)
         "message": "Payment failure recorded.",
         "order_id": payload.order_id
     }
+
+@router.get("/{order_id}/payment-status")
+async def get_order_payment_status(order_id: str):
+    """
+    Retrieve payment status of an order for customer confirmation or status polling.
+    Supports lookup by internal order ID or Razorpay order ID.
+    """
+    db = get_database()
+    order = await db.orders.find_one({"id": order_id})
+    if not order:
+        order = await db.orders.find_one({"razorpay_order_id": order_id})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found.")
+
+    return {
+        "id": order.get("id"),
+        "order_id": order.get("id"),
+        "razorpay_order_id": order.get("razorpay_order_id"),
+        "razorpay_payment_id": order.get("razorpay_payment_id"),
+        "paymentStatus": order.get("paymentStatus", "Pending"),
+        "status": order.get("status", "Processing"),
+        "paymentMethod": order.get("paymentMethod"),
+        "total": order.get("total"),
+        "currency": order.get("currency", "INR"),
+        "paid_at": order.get("paid_at")
+    }
+
 
 # ========================================================
 # Standard Orders CRUD Endpoints

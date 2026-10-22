@@ -1,10 +1,12 @@
 import os
 import re
+import hmac
+import hashlib
 import logging
 from typing import Optional, Dict, Any
 import razorpay
 from fastapi import HTTPException
-from app.config import RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
+from app.config import RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET
 
 logger = logging.getLogger("dazzle.razorpay")
 
@@ -28,7 +30,12 @@ def is_razorpay_configured() -> bool:
     """Check if Razorpay API keys are configured."""
     return bool(RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET)
 
+def is_razorpay_webhook_configured() -> bool:
+    """Check if Razorpay Webhook secret is configured."""
+    return bool(RAZORPAY_WEBHOOK_SECRET or RAZORPAY_KEY_SECRET)
+
 _razorpay_client_instance: Optional[razorpay.Client] = None
+
 
 def get_razorpay_client() -> Optional[razorpay.Client]:
     """Get initialized Razorpay Python SDK client."""
@@ -101,8 +108,10 @@ def get_razorpay_status() -> Dict[str, Any]:
         "status": _razorpay_state.get("status", "not_configured"),
         "key_id": RAZORPAY_KEY_ID if is_razorpay_configured() else None,
         "mode": _razorpay_state.get("mode", "test"),
-        "currency": "INR"
+        "currency": "INR",
+        "webhook_configured": is_razorpay_webhook_configured()
     }
+
 
 def create_razorpay_order(
     amount_in_rupees: float,
@@ -160,30 +169,72 @@ def verify_razorpay_signature(
     razorpay_signature: str
 ) -> bool:
     """
-    Cryptographically verify the Razorpay payment signature using the official SDK.
-    Never trusts client input without HMAC-SHA256 signature verification.
+    Cryptographically verify the Razorpay payment signature.
+    Uses official SDK utility with direct HMAC-SHA256 comparison fallback.
+    Never trusts client input without cryptographic signature verification.
     """
     if not is_razorpay_configured():
         raise HTTPException(status_code=503, detail="Razorpay not configured.")
 
-    client = get_razorpay_client()
-    if not client:
-        raise HTTPException(status_code=500, detail="Razorpay client unavailable.")
+    if not razorpay_order_id or not razorpay_payment_id or not razorpay_signature:
+        return False
 
+    # 1. Try SDK verification
     try:
-        # Calls client.utility.verify_payment_signature
-        result = client.utility.verify_payment_signature({
-            "razorpay_order_id": razorpay_order_id,
-            "razorpay_payment_id": razorpay_payment_id,
-            "razorpay_signature": razorpay_signature
-        })
-        return bool(result)
-    except razorpay.errors.SignatureVerificationError as e:
-        logger.warning(f"Razorpay signature mismatch for order {razorpay_order_id}: {_sanitize_razorpay_error(e)}")
+        client = get_razorpay_client()
+        if client:
+            client.utility.verify_payment_signature({
+                "razorpay_order_id": razorpay_order_id,
+                "razorpay_payment_id": razorpay_payment_id,
+                "razorpay_signature": razorpay_signature
+            })
+            return True
+    except razorpay.errors.SignatureVerificationError:
         return False
     except Exception as e:
-        logger.error(f"Error during signature verification: {_sanitize_razorpay_error(e)}")
+        logger.debug(f"SDK signature verification notice: {_sanitize_razorpay_error(e)}")
+
+    # 2. Direct HMAC-SHA256 calculation according to Razorpay specification
+    try:
+        msg = f"{razorpay_order_id}|{razorpay_payment_id}".encode("utf-8")
+        secret = RAZORPAY_KEY_SECRET.encode("utf-8")
+        expected_sig = hmac.new(secret, msg, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected_sig, razorpay_signature)
+    except Exception as e:
+        logger.error(f"HMAC signature verification failed: {_sanitize_razorpay_error(e)}")
         return False
+
+def verify_razorpay_webhook_signature(raw_body: bytes, signature: str) -> bool:
+    """
+    Cryptographically verify incoming Razorpay webhook signature with RAZORPAY_WEBHOOK_SECRET.
+    Rejects invalid signatures.
+    """
+    secret = RAZORPAY_WEBHOOK_SECRET or RAZORPAY_KEY_SECRET
+    if not secret or not signature:
+        return False
+
+    body_bytes = raw_body if isinstance(raw_body, bytes) else raw_body.encode("utf-8")
+    body_str = body_bytes.decode("utf-8", errors="replace")
+
+    # 1. Try SDK verification if available
+    try:
+        client = get_razorpay_client()
+        if client:
+            client.utility.verify_webhook_signature(body_str, signature, secret)
+            return True
+    except razorpay.errors.SignatureVerificationError:
+        return False
+    except Exception:
+        pass
+
+    # 2. Direct HMAC-SHA256 comparison
+    try:
+        expected = hmac.new(secret.encode("utf-8"), body_bytes, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, signature)
+    except Exception as e:
+        logger.error(f"Webhook signature calculation error: {_sanitize_razorpay_error(e)}")
+        return False
+
 
 def fetch_payment_details(razorpay_payment_id: str) -> Optional[Dict[str, Any]]:
     """Fetch verified payment details from Razorpay API."""

@@ -19,8 +19,10 @@ from app.routers import (
     media,
     upload,
     dashboard,
-    backup
+    backup,
+    webhooks
 )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -91,6 +93,8 @@ app.include_router(media.router)
 app.include_router(upload.router)
 app.include_router(dashboard.router)
 app.include_router(backup.router)
+app.include_router(webhooks.router)
+
 
 @app.get("/", tags=["Root"])
 def root():
