@@ -55,7 +55,7 @@ async def main():
     # Interactive input collection if missing
     username = (args.username or "").strip()
     if not username:
-        if args.non-interactive:
+        if args.non_interactive:
             print("Error: --username is required in non-interactive mode.", file=sys.stderr)
             sys.exit(1)
         username = input("Enter admin username: ").strip()
@@ -93,7 +93,7 @@ async def main():
         # Collect email
         email = (args.email or "").strip()
         if not email and not existing_admin:
-            if args.non-interactive:
+            if args.non_interactive:
                 email = f"{clean_username}@dazzlebydua.com"
             else:
                 email = input(f"Enter admin email [{clean_username}@dazzlebydua.com]: ").strip()
@@ -107,7 +107,7 @@ async def main():
         # Collect password
         password = args.password or ""
         if not password:
-            if args.non-interactive:
+            if args.non_interactive:
                 print("Error: --password is required in non-interactive mode.", file=sys.stderr)
                 sys.exit(1)
             password = getpass.getpass("Enter secure password (min 8 characters): ")
