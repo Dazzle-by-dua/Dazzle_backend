@@ -3,22 +3,8 @@
 # Exact match with frontend DEFAULT_* objects in script.js
 # ========================================================
 
-DEFAULT_ADMINS = [
-    {
-        "username": "admin",
-        "email": "admin@dazzlebydua.com",
-        "password": "admin123",
-        "name": "Dua",
-        "role": "Master Administrator"
-    },
-    {
-        "username": "dua",
-        "email": "dua@dazzlebydua.com",
-        "password": "dazzleadmin",
-        "name": "Dua",
-        "role": "Store Owner"
-    }
-]
+# Note: Admin accounts are no longer seeded with hardcoded default passwords.
+# Administrators must be provisioned securely via create_admin.py or INITIAL_ADMIN_* environment variables.
 
 DEFAULT_PRODUCTS = [
     {

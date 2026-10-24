@@ -6,7 +6,6 @@ from typing import Optional, Dict, Any, List
 import bcrypt
 from app.config import MONGODB_URI, MONGODB_DB, UPLOAD_DIR
 from app.seed_data import (
-    DEFAULT_ADMINS,
     DEFAULT_PRODUCTS,
     DEFAULT_CATEGORIES,
     DEFAULT_REVIEWS,
@@ -192,17 +191,30 @@ class DatabaseManager:
     async def _seed_defaults_if_needed(self):
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-        # 1. Admins
+        # 1. Admins: Only provision if explicitly configured via environment variables
+        # and no administrator accounts exist yet. Never use hardcoded passwords.
         if await self.db.admins.count_documents({}) == 0:
-            for a in DEFAULT_ADMINS:
-                await self.db.admins.insert_one({
-                    "username": a["username"],
-                    "email": a["email"],
-                    "password_hash": hash_password(a["password"]),
-                    "name": a["name"],
-                    "role": a["role"],
-                    "created_at": now_iso
-                })
+            init_username = os.getenv("INITIAL_ADMIN_USERNAME", "").strip()
+            init_password = os.getenv("INITIAL_ADMIN_PASSWORD", "").strip()
+            init_email = os.getenv("INITIAL_ADMIN_EMAIL", "").strip()
+            init_name = os.getenv("INITIAL_ADMIN_NAME", "").strip() or init_username
+
+            if init_username and init_password:
+                if len(init_password) < 8:
+                    logger.error("INITIAL_ADMIN_PASSWORD must be at least 8 characters. Admin provisioning skipped.")
+                else:
+                    admin_doc = {
+                        "username": init_username.lower(),
+                        "email": init_email.lower() if init_email else f"{init_username.lower()}@dazzlebydua.com",
+                        "password_hash": hash_password(init_password),
+                        "name": init_name,
+                        "role": "Master Administrator",
+                        "created_at": now_iso
+                    }
+                    await self.db.admins.insert_one(admin_doc)
+                    logger.info(f"Initial administrator '{init_username}' provisioned from environment variables.")
+            else:
+                logger.info("No administrator accounts configured. Use 'python create_admin.py' to provision an admin account.")
 
         # 2. Products
         if await self.db.products.count_documents({}) == 0:

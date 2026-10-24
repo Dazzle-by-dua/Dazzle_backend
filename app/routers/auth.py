@@ -1,3 +1,4 @@
+import re
 import datetime
 from fastapi import APIRouter, HTTPException, status, Depends, Response
 from app.database import get_database
@@ -12,9 +13,10 @@ async def login(payload: AdminLoginRequest, response: Response):
     clean_pass = payload.password.strip()
     db = get_database()
 
+    escaped_id = re.escape(clean_id)
     admin = await db.admins.find_one({"$or": [
-        {"username": {"$regex": f"^{clean_id}$", "$options": "i"}},
-        {"email": {"$regex": f"^{clean_id}$", "$options": "i"}}
+        {"username": {"$regex": f"^{escaped_id}$", "$options": "i"}},
+        {"email": {"$regex": f"^{escaped_id}$", "$options": "i"}}
     ]})
 
     if not admin or not verify_password(clean_pass, admin["password_hash"]):

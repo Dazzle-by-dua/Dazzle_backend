@@ -8,6 +8,8 @@ from starlette.testclient import TestClient
 from app.main import app
 from app.config import RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET
 
+from tests.conftest import TEST_ADMIN_USERNAME, TEST_ADMIN_PASSWORD
+
 client = TestClient(app)
 
 @pytest.fixture(scope="session", autouse=True)
@@ -17,11 +19,16 @@ def app_lifespan():
 
 @pytest.fixture(autouse=True)
 def reset_db_state():
-    login_res = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+    login_res = client.post("/api/auth/login", json={"username": TEST_ADMIN_USERNAME, "password": TEST_ADMIN_PASSWORD})
     if login_res.status_code == 200:
         token = login_res.json().get("token")
         if token:
             client.post("/api/backup/reset", headers={"Authorization": f"Bearer {token}"})
+
+def get_auth_headers():
+    login_res = client.post("/api/auth/login", json={"username": TEST_ADMIN_USERNAME, "password": TEST_ADMIN_PASSWORD})
+    token = login_res.json().get("token")
+    return {"Authorization": f"Bearer {token}"}
 
 def compute_payment_signature(rzp_order_id: str, rzp_payment_id: str, secret: str = None) -> str:
     sec = secret or RAZORPAY_KEY_SECRET or "test_secret_key"
@@ -88,13 +95,19 @@ def test_create_order_trusted_pricing_and_paise_conversion():
         assert data["currency"] == "INR"
         assert "order_id" in data
 
-        # Verify order in DB has 'Payment Pending' and trusted total
-        order_res = client.get(f"/api/orders/{data['order_id']}")
+        # Verify order in DB via admin authenticated endpoint
+        headers = get_auth_headers()
+        order_res = client.get(f"/api/orders/{data['order_id']}", headers=headers)
         assert order_res.status_code == 200
         db_order = order_res.json()
         assert db_order["total"] == 4990.0
         assert db_order["paymentStatus"] == "Pending"
         assert db_order["status"] == "Payment Pending"
+
+        # Also verify customer public payment-status endpoint
+        pub_status = client.get(f"/api/orders/{data['order_id']}/payment-status")
+        assert pub_status.status_code == 200
+        assert pub_status.json()["paymentStatus"] == "Pending"
 
 # =========================================================================
 # 3. Invalid Product IDs, Quantities & Empty Cart Rejections
@@ -130,7 +143,7 @@ def test_create_order_invalid_inputs_rejection():
 # =========================================================================
 def test_create_order_out_of_stock_rejection():
     # Toggle product 1 to out of stock
-    login = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+    login = client.post("/api/auth/login", json={"username": TEST_ADMIN_USERNAME, "password": TEST_ADMIN_PASSWORD})
     token = login.json()["token"]
     client.patch("/api/products/1/stock", json={"inStock": False}, headers={"Authorization": f"Bearer {token}"})
 
@@ -367,7 +380,8 @@ def test_razorpay_webhooks_flow_and_deduplication():
         assert res_wh.json()["status"] == "ok"
 
     # Order should now be marked Paid & Processing
-    order_doc = client.get(f"/api/orders/{internal_id}").json()
+    headers = get_auth_headers()
+    order_doc = client.get(f"/api/orders/{internal_id}", headers=headers).json()
     assert order_doc["paymentStatus"] == "Paid"
     assert order_doc["status"] == "Processing"
     assert order_doc["razorpay_payment_id"] == f"pay_wh_captured_{uid}"

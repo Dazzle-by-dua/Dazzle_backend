@@ -5,6 +5,13 @@ from starlette.testclient import TestClient
 from app.main import app
 from app.database import init_db, reset_all_data
 
+from tests.conftest import (
+    TEST_ADMIN_USERNAME,
+    TEST_ADMIN_PASSWORD,
+    TEST_ADMIN_EMAIL,
+    TEST_ADMIN_NAME
+)
+
 client = TestClient(app)
 
 @pytest.fixture(scope="session", autouse=True)
@@ -14,7 +21,7 @@ def app_lifespan():
 
 @pytest.fixture(autouse=True)
 def reset_db_between_tests():
-    login_res = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+    login_res = client.post("/api/auth/login", json={"username": TEST_ADMIN_USERNAME, "password": TEST_ADMIN_PASSWORD})
     if login_res.status_code == 200:
         token = login_res.json().get("token")
         if token:
@@ -45,16 +52,16 @@ def test_root_and_health():
 # 2. Authentication
 def test_admin_auth_success_and_failure():
     # Invalid password
-    res = client.post("/api/auth/login", json={"username": "admin", "password": "wrongpassword"})
+    res = client.post("/api/auth/login", json={"username": TEST_ADMIN_USERNAME, "password": "wrongpassword"})
     assert res.status_code == 401
 
-    # Valid login
-    res = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+    # Valid login with test admin
+    res = client.post("/api/auth/login", json={"username": TEST_ADMIN_USERNAME, "password": TEST_ADMIN_PASSWORD})
     assert res.status_code == 200
     data = res.json()
     assert data["success"] is True
     assert "token" in data
-    assert data["user"]["user"] == "Dua"
+    assert data["user"]["user"] == TEST_ADMIN_NAME
 
     token = data["token"]
     headers = {"Authorization": f"Bearer {token}"}
@@ -62,7 +69,7 @@ def test_admin_auth_success_and_failure():
     # Verify /api/auth/me
     res_me = client.get("/api/auth/me", headers=headers)
     assert res_me.status_code == 200
-    assert res_me.json()["email"] == "admin@dazzlebydua.com"
+    assert res_me.json()["email"] == TEST_ADMIN_EMAIL
 
     # Logout
     res_logout = client.post("/api/auth/logout")
@@ -70,7 +77,7 @@ def test_admin_auth_success_and_failure():
 
 # Helper to get admin headers
 def get_auth_headers():
-    res = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+    res = client.post("/api/auth/login", json={"username": TEST_ADMIN_USERNAME, "password": TEST_ADMIN_PASSWORD})
     token = res.json()["token"]
     return {"Authorization": f"Bearer {token}"}
 
@@ -187,6 +194,28 @@ def test_orders_flow():
     res_stat = client.patch(f"/api/orders/{order_id}/status", json={"status": "Shipped"}, headers=headers)
     assert res_stat.status_code == 200
     assert res_stat.json()["status"] == "Shipped"
+
+    # Verify GET /api/orders requires authentication (using unauthenticated client without session cookies)
+    unauth_client = TestClient(app)
+    res_unauth_orders = unauth_client.get("/api/orders")
+    assert res_unauth_orders.status_code == 401
+
+    res_unauth_order_id = unauth_client.get(f"/api/orders/{order_id}")
+    assert res_unauth_order_id.status_code == 401
+
+    # Authenticated admin order retrieval succeeds
+    res_auth_orders = client.get("/api/orders", headers=headers)
+    assert res_auth_orders.status_code == 200
+    assert any(o["id"] == order_id for o in res_auth_orders.json())
+
+    res_auth_order_id = client.get(f"/api/orders/{order_id}", headers=headers)
+    assert res_auth_order_id.status_code == 200
+    assert res_auth_order_id.json()["customer"] == "Rania Al-Noor"
+
+    # Verify public customer payment-status check still works without authentication
+    res_pub_status = client.get(f"/api/orders/{order_id}/payment-status")
+    assert res_pub_status.status_code == 200
+    assert res_pub_status.json()["order_id"] == order_id
 
     # Customer analytics should now have rania
     res_cust = client.get("/api/customers", headers=headers)

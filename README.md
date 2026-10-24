@@ -55,14 +55,15 @@ Configure these in your environment or on Render (**Environment** tab):
 | `MONGODB_DB` | MongoDB database name | `dazzle_by_dua` |
 | `HOST` | Host IP binding (use `0.0.0.0` for cloud deployment) | `0.0.0.0` |
 | `PORT` | Web server listening port (Render sets `$PORT`) | `8000` |
-| `SECRET_KEY` | JWT signing secret key | `your_secure_jwt_secret_key_here` |
+| `ENVIRONMENT` | Environment mode (`development` or `production`) | `development` |
+| `SECRET_KEY` | Cryptographic JWT signing secret (min 32 characters required in production) | *(Generated securely)* |
 | `ALGORITHM` | JWT signing algorithm | `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Token validity duration | `1440` (24 hours) |
 | `CORS_ORIGINS` | Comma-separated list of allowed origins | `*` |
 
 ---
 
-## ?? Render Deployment Guide
+## 🚀 Render Deployment Guide
 
 ### Render Web Service Settings:
 - **Environment**: `Python`
@@ -72,19 +73,39 @@ Configure these in your environment or on Render (**Environment** tab):
 
 ---
 
-## ?? Default Admin Credentials
+## 🔒 Administrator Account Management
 
-| Username | Email | Password | Role |
-| :--- | :--- | :--- | :--- |
-| `admin` | `admin@dazzlebydua.com` | `admin123` | Master Administrator |
-| `dua` | `dua@dazzlebydua.com` | `dazzleadmin` | Store Owner |
+Administrator credentials are not hardcoded in the codebase. All accounts use Bcrypt hashing and JWT bearer authentication.
+
+### Creating an Initial Administrator
+Run the protected backend CLI script:
+
+```bash
+# Interactive mode (prompts securely for password):
+python create_admin.py
+
+# Non-interactive mode:
+python create_admin.py --username dua --email dua@dazzlebydua.com --password "YOUR_SECURE_PASSWORD" --name "Dua" --role "Store Owner"
+```
+
+### Resetting an Existing Administrator's Password
+For safety, `create_admin.py` refuses to overwrite existing accounts. To explicitly authorize a password update for an existing account, include the `--reset` flag:
+
+```bash
+python create_admin.py --username dua --password "NEW_SECURE_PASSWORD" --reset
+```
+
+### Production Provisioning on Render
+In production, you can provision the initial administrator either by:
+1. Running `python create_admin.py` via the Render Shell / SSH console.
+2. Setting `INITIAL_ADMIN_USERNAME` and `INITIAL_ADMIN_PASSWORD` in Render environment variables for the initial launch, and removing `INITIAL_ADMIN_PASSWORD` once provisioned.
 
 ---
 
-## ?? Testing
+## 🧪 Testing
 
 Run the full automated test suite anytime:
 ```bash
-pytest tests/test_api.py -v
+pytest -v
 ```
-*(All 10 integration test suites verify full database CRUD and synchronization).*
+*(All integration tests run against isolated mock database configuration with dedicated test credentials).*

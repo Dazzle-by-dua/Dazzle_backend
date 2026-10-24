@@ -354,7 +354,8 @@ async def get_order_payment_status(order_id: str):
 @router.get("", response_model=List[OrderOut])
 async def get_orders(
     status: Optional[str] = Query(None),
-    search: Optional[str] = Query(None)
+    search: Optional[str] = Query(None),
+    admin: dict = Depends(get_current_admin)
 ):
     db = get_database()
     query = {}
@@ -370,7 +371,7 @@ async def get_orders(
     return clean_docs(items)
 
 @router.get("/{order_id}", response_model=OrderOut)
-async def get_order_by_id(order_id: str):
+async def get_order_by_id(order_id: str, admin: dict = Depends(get_current_admin)):
     db = get_database()
     order = await db.orders.find_one({"id": order_id})
     if not order:
