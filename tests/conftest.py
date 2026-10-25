@@ -40,3 +40,13 @@ def ensure_test_admin_seeded():
             })
 
     asyncio.run(_seed())
+
+@pytest.fixture(autouse=True)
+def pause_test_emails(monkeypatch):
+    """
+    Pause and mock real email dispatch across all tests to prevent real emails from being sent to user inboxes.
+    Tests can still inspect or override with unittest.mock.patch as needed.
+    """
+    import resend
+    monkeypatch.setattr(resend.Emails, "send", lambda params: {"id": "mock_paused_test_email_id"})
+
