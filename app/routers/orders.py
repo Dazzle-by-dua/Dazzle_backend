@@ -13,8 +13,11 @@ from app.models.schemas import (
     OrderStatusUpdate,
     RazorpayOrderCreateRequest,
     RazorpayPaymentVerifyRequest,
-    RazorpayPaymentFailedRequest
+    RazorpayPaymentFailedRequest,
+    DeliveryChargeRequest,
+    DeliveryChargeResponse
 )
+from app.delivery_rules import calculate_delivery_charge
 from app.security import get_current_admin
 from app.razorpay_service import (
     create_razorpay_order,
@@ -26,11 +29,18 @@ from app.razorpay_service import (
 
 router = APIRouter(prefix="/api/orders", tags=["Orders"])
 
-async def calculate_trusted_order_total(db, items: list, coupon_code: Optional[str] = None):
+async def calculate_trusted_order_total(
+    db,
+    items: list,
+    coupon_code: Optional[str] = None,
+    city: Optional[str] = None,
+    state: Optional[str] = None,
+    address: Optional[str] = None
+):
     """
-    Calculate subtotal, discount, shipping, and total from trusted MongoDB product prices.
+    Calculate subtotal, discount, location-based shipping, and total from trusted MongoDB product prices.
     Strictly validates product existence, availability, and positive quantities.
-    Returns (trusted_total, subtotal, discount, verified_items_list).
+    Returns (trusted_total, subtotal, discount, verified_items, shipping_fee, delivery_info).
     """
     subtotal = 0.0
     verified_items = []
@@ -100,19 +110,26 @@ async def calculate_trusted_order_total(db, items: list, coupon_code: Optional[s
                 elif ctype == "fixed":
                     discount = min(cval, subtotal)
 
-    # Shipping fee calculation (Free above freeShippingThreshold, default 2500)
-    settings_doc = await db.settings.find_one({"key": "main"})
-    settings_data = settings_doc.get("data", {}) if settings_doc else {}
-    free_threshold = float(settings_data.get("freeShippingThreshold", 2500))
-    shipping_fee = 0.0 if (subtotal - discount) >= free_threshold else 150.0
+    # Location-based fixed delivery fee:
+    # Hyderabad: ₹50, Rest of Telangana: ₹70, All other Indian States/UTs: ₹90
+    delivery_info = calculate_delivery_charge(city=city, state=state, address=address)
+    shipping_fee = float(delivery_info["delivery_fee"])
 
     total = max(0.0, round(subtotal - discount + shipping_fee, 2))
-    return total, subtotal, discount, verified_items
+    return total, subtotal, discount, verified_items, shipping_fee, delivery_info
 
 
 # ========================================================
-# Razorpay Integration Endpoints (Declared before /{order_id})
+# Delivery & Razorpay Endpoints (Declared before /{order_id})
 # ========================================================
+
+@router.post("/delivery-charge", response_model=DeliveryChargeResponse)
+async def get_delivery_charge_endpoint(payload: DeliveryChargeRequest):
+    """
+    Public calculation endpoint for location-based delivery charges.
+    Rates: Hyderabad ₹50, Rest of Telangana ₹70, All other Indian States/UTs ₹90.
+    """
+    return calculate_delivery_charge(city=payload.city, state=payload.state, address=payload.address)
 
 @router.get("/razorpay/config")
 async def get_razorpay_public_config():
@@ -129,10 +146,13 @@ async def create_razorpay_order_endpoint(payload: RazorpayOrderCreateRequest):
         raise HTTPException(status_code=400, detail="Cart is empty. Cannot create order.")
 
     db = get_database()
-    trusted_total, subtotal, discount, verified_items = await calculate_trusted_order_total(
+    trusted_total, subtotal, discount, verified_items, shipping_fee, delivery_info = await calculate_trusted_order_total(
         db=db,
         items=payload.items,
-        coupon_code=payload.coupon_code
+        coupon_code=payload.coupon_code,
+        city=payload.city,
+        state=payload.state,
+        address=payload.address
     )
 
     if trusted_total < 1.0:
@@ -168,11 +188,17 @@ async def create_razorpay_order_endpoint(payload: RazorpayOrderCreateRequest):
         "total": trusted_total,
         "subtotal": subtotal,
         "discount": discount,
+        "shipping_fee": shipping_fee,
+        "delivery_fee": shipping_fee,
+        "delivery_location_type": delivery_info["rate_type"],
+        "city": delivery_info["city"],
+        "state": delivery_info["state"],
         "status": "Payment Pending",
         "paymentMethod": "Razorpay Online",
         "paymentStatus": "Pending",
         "address": payload.address or "",
         "landmark": payload.landmark or "",
+        "postal_code": payload.postal_code,
         "items": verified_items,
         "razorpay_order_id": rzp_res["razorpay_order_id"],
         "currency": "INR",
@@ -190,12 +216,17 @@ async def create_razorpay_order_endpoint(payload: RazorpayOrderCreateRequest):
         "currency": "INR",
         "order_id": order_id,
         "total": trusted_total,
+        "subtotal": subtotal,
+        "discount": discount,
+        "shipping_fee": shipping_fee,
+        "delivery_fee": shipping_fee,
         "customer": {
             "name": payload.customer,
             "email": payload.email,
             "contact": payload.phone
         }
     }
+
 
 @router.post("/razorpay/verify")
 @router.post("/razorpay/verify-payment")
@@ -407,7 +438,25 @@ async def create_order(payload: OrderCreate):
             if not await db.orders.find_one({"id": order_id}):
                 break
 
-    items_dict_list = [item.model_dump() for item in payload.items]
+    # Authoritative calculation of trusted total and location-based delivery fee
+    if payload.items and len(payload.items) > 0:
+        trusted_total, subtotal, discount, verified_items, shipping_fee, delivery_info = await calculate_trusted_order_total(
+            db=db,
+            items=payload.items,
+            coupon_code=payload.coupon_code,
+            city=payload.city,
+            state=payload.state,
+            address=payload.address
+        )
+        items_dict_list = verified_items
+    else:
+        delivery_info = calculate_delivery_charge(city=payload.city, state=payload.state, address=payload.address)
+        shipping_fee = float(delivery_info["delivery_fee"])
+        subtotal = float(payload.total or 0.0)
+        discount = 0.0
+        trusted_total = max(0.0, round(subtotal + shipping_fee, 2))
+        items_dict_list = [item.model_dump() for item in payload.items]
+
     # Standard storefront order creation (e.g. Cash on Delivery) must always default to Pending.
     # Never mark orders as Paid without cryptographic gateway verification.
     pay_status = "Pending"
@@ -418,12 +467,20 @@ async def create_order(payload: OrderCreate):
         "email": payload.email,
         "phone": payload.phone or "",
         "date": formatted_date,
-        "total": float(payload.total),
+        "total": trusted_total,
+        "subtotal": subtotal,
+        "discount": discount,
+        "shipping_fee": shipping_fee,
+        "delivery_fee": shipping_fee,
+        "delivery_location_type": delivery_info["rate_type"],
+        "city": delivery_info["city"],
+        "state": delivery_info["state"],
         "status": payload.status or "Processing",
         "paymentMethod": payload.paymentMethod or "Cash on Delivery",
         "paymentStatus": pay_status,
         "address": payload.address or "",
         "landmark": payload.landmark or "",
+        "postal_code": payload.postal_code,
         "items": items_dict_list,
         "razorpay_order_id": payload.razorpay_order_id,
         "razorpay_payment_id": payload.razorpay_payment_id,

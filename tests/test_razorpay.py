@@ -72,7 +72,7 @@ def test_create_order_trusted_pricing_and_paise_conversion():
 
     mock_rzp_order = {
         "id": "order_test_12345",
-        "amount": 499000, # In paise (₹4,990.00)
+        "amount": 508000, # In paise (₹5,080.00 including ₹90 Maharashtra delivery)
         "currency": "INR",
         "receipt": "DBD-2026-TEST",
         "status": "created"
@@ -89,9 +89,10 @@ def test_create_order_trusted_pricing_and_paise_conversion():
         assert data["success"] is True
         assert data["razorpay_order_id"] == "order_test_12345"
         # Total trusted amount calculated from MongoDB (4990)
-        assert data["total"] == 4990.0
+        assert data["total"] == 5080.0
+        assert data["delivery_fee"] == 90.0
         # Amount sent to Razorpay modal is in paise
-        assert data["amount"] == 499000
+        assert data["amount"] == 508000
         assert data["currency"] == "INR"
         assert "order_id" in data
 
@@ -100,7 +101,8 @@ def test_create_order_trusted_pricing_and_paise_conversion():
         order_res = client.get(f"/api/orders/{data['order_id']}", headers=headers)
         assert order_res.status_code == 200
         db_order = order_res.json()
-        assert db_order["total"] == 4990.0
+        assert db_order["total"] == 5080.0
+        assert db_order["delivery_fee"] == 90.0
         assert db_order["paymentStatus"] == "Pending"
         assert db_order["status"] == "Payment Pending"
 
@@ -163,7 +165,7 @@ def test_verify_payment_signatures_and_idempotency():
     # 1. Create order
     mock_rzp_order = {
         "id": "order_sig_test_100",
-        "amount": 499000,
+        "amount": 504000,
         "currency": "INR",
         "receipt": "DBD-2026-SIG",
         "status": "created"
@@ -176,7 +178,9 @@ def test_verify_payment_signatures_and_idempotency():
         create_res = client.post("/api/orders/razorpay/create-order", json={
             "items": [{"id": 1, "qty": 1}],
             "customer": "Fatima",
-            "email": "fatima@example.com"
+            "email": "fatima@example.com",
+            "city": "Hyderabad",
+            "state": "Telangana"
         })
         assert create_res.status_code == 200
         order_info = create_res.json()
@@ -208,7 +212,7 @@ def test_verify_payment_signatures_and_idempotency():
 
     mock_pay_details = {
         "id": valid_payment_id,
-        "amount": 4990.0,
+        "amount": 5040.0,
         "currency": "INR",
         "status": "captured",
         "method": "upi"
@@ -237,7 +241,7 @@ def test_verify_payment_signatures_and_idempotency():
 def test_verify_payment_amount_and_currency_mismatch():
     mock_rzp_order = {
         "id": "order_mismatch_100",
-        "amount": 499000,
+        "amount": 504000,
         "currency": "INR",
         "receipt": "DBD-2026-MISMATCH",
         "status": "created"
@@ -250,7 +254,9 @@ def test_verify_payment_amount_and_currency_mismatch():
         create_res = client.post("/api/orders/razorpay/create-order", json={
             "items": [{"id": 1, "qty": 1}],
             "customer": "Zoya",
-            "email": "zoya@example.com"
+            "email": "zoya@example.com",
+            "city": "Hyderabad",
+            "state": "Telangana"
         })
         order_info = create_res.json()
 
@@ -282,11 +288,11 @@ def test_verify_payment_amount_and_currency_mismatch():
 # =========================================================================
 def test_payment_failure_tracking_and_no_overwrite_paid():
     # 1. Create order
-    mock_rzp_order = {"id": "order_fail_1", "amount": 499000, "currency": "INR", "receipt": "DBD-FAIL", "status": "created"}
+    mock_rzp_order = {"id": "order_fail_1", "amount": 504000, "currency": "INR", "receipt": "DBD-FAIL", "status": "created"}
     with patch("app.razorpay_service.is_razorpay_configured", return_value=True), \
          patch("app.razorpay_service.get_razorpay_client") as mock_client:
         mock_client.return_value.order.create.return_value = mock_rzp_order
-        c_res = client.post("/api/orders/razorpay/create-order", json={"items": [{"id": 1, "qty": 1}], "customer": "Sara", "email": "sara@example.com"})
+        c_res = client.post("/api/orders/razorpay/create-order", json={"items": [{"id": 1, "qty": 1}], "customer": "Sara", "email": "sara@example.com", "city": "Hyderabad", "state": "Telangana"})
         order = c_res.json()
 
     # Record failure
@@ -307,7 +313,7 @@ def test_payment_failure_tracking_and_no_overwrite_paid():
     # Now verify the order as Paid
     valid_sig = compute_payment_signature(order["razorpay_order_id"], "pay_success_after_fail")
     with patch("app.razorpay_service.is_razorpay_configured", return_value=True), \
-         patch("app.razorpay_service.fetch_payment_details", return_value={"amount": 4990.0, "currency": "INR", "method": "upi"}):
+         patch("app.razorpay_service.fetch_payment_details", return_value={"amount": 5040.0, "currency": "INR", "method": "upi"}):
         client.post("/api/orders/razorpay/verify", json={
             "order_id": order["order_id"],
             "razorpay_order_id": order["razorpay_order_id"],
@@ -330,11 +336,11 @@ def test_payment_failure_tracking_and_no_overwrite_paid():
 # =========================================================================
 def test_razorpay_webhooks_flow_and_deduplication():
     # 1. Create order in MongoDB
-    mock_rzp_order = {"id": "order_wh_1", "amount": 499000, "currency": "INR", "receipt": "DBD-WH", "status": "created"}
+    mock_rzp_order = {"id": "order_wh_1", "amount": 504000, "currency": "INR", "receipt": "DBD-WH", "status": "created"}
     with patch("app.razorpay_service.is_razorpay_configured", return_value=True), \
          patch("app.razorpay_service.get_razorpay_client") as mock_client:
         mock_client.return_value.order.create.return_value = mock_rzp_order
-        c_res = client.post("/api/orders/razorpay/create-order", json={"items": [{"id": 1, "qty": 1}], "customer": "Noor", "email": "noor@example.com"})
+        c_res = client.post("/api/orders/razorpay/create-order", json={"items": [{"id": 1, "qty": 1}], "customer": "Noor", "email": "noor@example.com", "city": "Hyderabad", "state": "Telangana"})
         internal_id = c_res.json()["order_id"]
 
     # 2. Missing signature

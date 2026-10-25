@@ -168,7 +168,24 @@ class ValidateCouponResponse(BaseModel):
     coupon: Optional[CouponOut] = None
 
 # ========================================================
-# 5. Order Schemas
+# ========================================================
+# 5. Delivery Charge Schemas
+# ========================================================
+class DeliveryChargeRequest(BaseModel):
+    city: Optional[str] = None
+    state: Optional[str] = None
+    address: Optional[str] = None
+
+class DeliveryChargeResponse(BaseModel):
+    delivery_fee: float
+    rate_type: str
+    city: str
+    state: str
+    description: str
+
+
+# ========================================================
+# 6. Order Schemas
 # ========================================================
 class OrderItem(BaseModel):
     id: Union[int, str]
@@ -191,6 +208,11 @@ class OrderCreate(BaseModel):
     paymentStatus: Optional[str] = "Pending"
     address: Optional[str] = None
     landmark: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    postal_code: Optional[str] = None
+    delivery_fee: Optional[float] = None
+    shipping_fee: Optional[float] = None
     items: List[OrderItem] = Field(default_factory=list)
     razorpay_order_id: Optional[str] = None
     razorpay_payment_id: Optional[str] = None
@@ -198,6 +220,7 @@ class OrderCreate(BaseModel):
     currency: Optional[str] = "INR"
     paid_at: Optional[str] = None
     notes: Optional[str] = None
+    coupon_code: Optional[str] = None
 
 class OrderStatusUpdate(BaseModel):
     status: str
@@ -210,6 +233,14 @@ class OrderOut(BaseModel):
     phone: Optional[str] = None
     date: str
     total: float
+    subtotal: Optional[float] = None
+    discount: Optional[float] = None
+    shipping_fee: Optional[float] = None
+    delivery_fee: Optional[float] = None
+    delivery_location_type: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    postal_code: Optional[str] = None
     status: str
     paymentMethod: str
     paymentStatus: Optional[str] = "Pending"
@@ -229,6 +260,10 @@ class RazorpayOrderCreateRequest(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     landmark: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    postal_code: Optional[str] = None
+    delivery_fee: Optional[float] = None
     notes: Optional[str] = None
     coupon_code: Optional[str] = None
 

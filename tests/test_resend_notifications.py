@@ -536,7 +536,10 @@ def test_accurate_payment_status_cod_vs_razorpay():
             "id": "DBD-COD-STATUS-01",
             "customer": "Ananya Roy",
             "email": "ananya@example.com",
-            "total": 2990.0,
+            "total": 3040.0,
+            "address": "Banjara Hills, Hyderabad, Telangana",
+            "city": "Hyderabad",
+            "state": "Telangana",
             "paymentMethod": "Cash on Delivery",
             "paymentStatus": "Pending",
             "items": [{"id": 1, "name": "Earrings", "price": 2990.0, "qty": 1}]
@@ -554,7 +557,10 @@ def test_accurate_payment_status_cod_vs_razorpay():
             "id": "DBD-FAKE-ONLINE-01",
             "customer": "Unverified User",
             "email": "fake@example.com",
-            "total": 4990.0,
+            "total": 5040.0,
+            "address": "Banjara Hills, Hyderabad, Telangana",
+            "city": "Hyderabad",
+            "state": "Telangana",
             "paymentMethod": "Razorpay Online",
             "paymentStatus": "Paid",  # Attacker attempts to bypass payment
             "items": [{"id": 1, "name": "Earrings", "price": 4990.0, "qty": 1}]
