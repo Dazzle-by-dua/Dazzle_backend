@@ -80,4 +80,13 @@ RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip()
 RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "").strip() or "Dazzle by Dua <onboarding@resend.dev>"
 
+# Google Maps & Delivery Distance Configuration
+GOOGLE_MAPS_BROWSER_API_KEY = os.getenv("GOOGLE_MAPS_BROWSER_API_KEY", "").strip()
+GOOGLE_MAPS_SERVER_API_KEY = os.getenv("GOOGLE_MAPS_SERVER_API_KEY", "").strip()
+SHOP_LATITUDE = float(os.getenv("SHOP_LATITUDE", "17.387463").strip() or 17.387463)
+SHOP_LONGITUDE = float(os.getenv("SHOP_LONGITUDE", "78.524824").strip() or 78.524824)
+SHOP_POSTAL_CODE = os.getenv("SHOP_POSTAL_CODE", "500013").strip()
+MAX_DELIVERY_DISTANCE_KM = float(os.getenv("MAX_DELIVERY_DISTANCE_KM", "50.0").strip() or 50.0)
+DELIVERY_FEE_RULES_JSON = os.getenv("DELIVERY_FEE_RULES_JSON", "").strip()
+
 

@@ -20,7 +20,8 @@ from app.routers import (
     upload,
     dashboard,
     backup,
-    webhooks
+    webhooks,
+    delivery
 )
 
 
@@ -94,6 +95,7 @@ app.include_router(upload.router)
 app.include_router(dashboard.router)
 app.include_router(backup.router)
 app.include_router(webhooks.router)
+app.include_router(delivery.router)
 
 
 @app.get("/", tags=["Root"])
