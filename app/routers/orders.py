@@ -230,6 +230,12 @@ async def verify_razorpay_payment_endpoint(payload: RazorpayPaymentVerifyRequest
 
     # 3. Prevent duplicate payment confirmation (Idempotent response)
     if order.get("paymentStatus") == "Paid":
+        if not order.get("notifications", {}).get("admin_new_order_sent"):
+            try:
+                from app.resend_service import send_new_order_admin_notification
+                await send_new_order_admin_notification(order, db)
+            except Exception as notify_err:
+                logger.warning(f"Resend notification retry error for order {order['id']}: {notify_err}")
         return {
             "success": True,
             "message": "Payment already verified and confirmed.",
@@ -272,6 +278,12 @@ async def verify_razorpay_payment_endpoint(payload: RazorpayPaymentVerifyRequest
     )
 
     updated_order = await db.orders.find_one({"id": order["id"]})
+    try:
+        from app.resend_service import send_new_order_admin_notification
+        await send_new_order_admin_notification(updated_order, db)
+    except Exception as notify_err:
+        logger.warning(f"Resend notification error for order {order['id']}: {notify_err}")
+
     return {
         "success": True,
         "message": "Payment verified and order confirmed successfully.",
@@ -395,9 +407,9 @@ async def create_order(payload: OrderCreate):
                 break
 
     items_dict_list = [item.model_dump() for item in payload.items]
-
-    # If COD, default payment status is Pending
-    pay_status = payload.paymentStatus or ("Paid" if "online" in (payload.paymentMethod or "").lower() else "Pending")
+    # Standard storefront order creation (e.g. Cash on Delivery) must always default to Pending.
+    # Never mark orders as Paid without cryptographic gateway verification.
+    pay_status = "Pending"
 
     doc = {
         "id": order_id,
@@ -419,6 +431,13 @@ async def create_order(payload: OrderCreate):
         "updated_at": now_iso
     }
     await db.orders.insert_one(doc)
+
+    try:
+        from app.resend_service import send_new_order_admin_notification
+        await send_new_order_admin_notification(doc, db)
+    except Exception as notify_err:
+        logger.warning(f"Resend notification error for order {order_id}: {notify_err}")
+
     return clean_doc(doc)
 
 @router.patch("/{order_id}/status", response_model=OrderOut)

@@ -75,4 +75,9 @@ RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "").strip()
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "").strip()
 RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET", "").strip()
 
+# Resend Email Service (Admin Order Notifications)
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip()
+RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "").strip() or "Dazzle by Dua <onboarding@resend.dev>"
+
 

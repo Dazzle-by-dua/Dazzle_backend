@@ -81,6 +81,12 @@ async def handle_razorpay_webhook(
             # Prevent duplicate confirmation
             if order.get("paymentStatus") == "Paid":
                 logger.info(f"Order {order['id']} is already marked as Paid.")
+                if not order.get("notifications", {}).get("admin_new_order_sent"):
+                    try:
+                        from app.resend_service import send_new_order_admin_notification
+                        await send_new_order_admin_notification(order, db)
+                    except Exception as notify_err:
+                        logger.warning(f"Resend notification retry error for order {order['id']}: {notify_err}")
             else:
                 method = payment_entity.get("method")
                 pay_method_label = f"Razorpay ({method.upper()})" if method else "Razorpay Online"
@@ -99,6 +105,12 @@ async def handle_razorpay_webhook(
                     }
                 )
                 logger.info(f"Order {order['id']} successfully updated to Paid & Processing via webhook {event_name}.")
+                updated_order = await db.orders.find_one({"id": order["id"]})
+                try:
+                    from app.resend_service import send_new_order_admin_notification
+                    await send_new_order_admin_notification(updated_order, db)
+                except Exception as notify_err:
+                    logger.warning(f"Resend notification error for order {order['id']}: {notify_err}")
 
     elif event_name in ["payment.failed"]:
         payment_entity = event_payload.get("payload", {}).get("payment", {}).get("entity", {})
