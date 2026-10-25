@@ -81,7 +81,7 @@ ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip()
 RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "").strip() or "Dazzle by Dua <onboarding@resend.dev>"
 
 # Fixed Location-Based Delivery Charges (INR)
-# Hyderabad: ₹50, Rest of Telangana: ₹70, All other Indian States/UTs: ₹90
+# Hyderabad: ₹50, Telangana: ₹70, All other Indian States/UTs: ₹90
 DELIVERY_FEE_HYDERABAD = float(os.getenv("DELIVERY_FEE_HYDERABAD", "50.0"))
 DELIVERY_FEE_TELANGANA = float(os.getenv("DELIVERY_FEE_TELANGANA", "70.0"))
 DELIVERY_FEE_REST_OF_INDIA = float(os.getenv("DELIVERY_FEE_REST_OF_INDIA", "90.0"))

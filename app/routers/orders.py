@@ -111,7 +111,7 @@ async def calculate_trusted_order_total(
                     discount = min(cval, subtotal)
 
     # Location-based fixed delivery fee:
-    # Hyderabad: ₹50, Rest of Telangana: ₹70, All other Indian States/UTs: ₹90
+    # Hyderabad: ₹50, Telangana: ₹70, All other Indian States/UTs: ₹90
     delivery_info = calculate_delivery_charge(city=city, state=state, address=address)
     shipping_fee = float(delivery_info["delivery_fee"])
 
@@ -127,7 +127,7 @@ async def calculate_trusted_order_total(
 async def get_delivery_charge_endpoint(payload: DeliveryChargeRequest):
     """
     Public calculation endpoint for location-based delivery charges.
-    Rates: Hyderabad ₹50, Rest of Telangana ₹70, All other Indian States/UTs ₹90.
+    Rates: Hyderabad ₹50, Telangana ₹70, All other Indian States/UTs ₹90.
     """
     return calculate_delivery_charge(city=payload.city, state=payload.state, address=payload.address)
 

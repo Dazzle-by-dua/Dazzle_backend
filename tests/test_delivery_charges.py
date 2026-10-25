@@ -1,7 +1,7 @@
 """
 Comprehensive unit and integration tests for location-based fixed delivery charges:
 - Hyderabad: ₹50
-- Rest of Telangana (excluding Hyderabad): ₹70
+- Telangana: ₹70
 - All other Indian states and union territories: ₹90
 - Casing & whitespace normalization
 - Missing / invalid / ambiguous address rejection
@@ -255,7 +255,7 @@ def test_cod_order_creation_telangana_other_city_70():
     assert res.status_code == 201
     order_data = res.json()
 
-    # Subtotal 4990.0 + Rest of Telangana delivery 70.0 = 5060.0
+    # Subtotal 4990.0 + Telangana delivery 70.0 = 5060.0
     assert order_data["delivery_fee"] == 70.0
     assert order_data["total"] == 5060.0
     assert order_data["delivery_location_type"] == "telangana"

@@ -3,7 +3,7 @@ Location-based fixed delivery charge rules for Dazzle by Dua.
 
 Delivery Fee Policy:
 - Hyderabad: ₹50
-- Rest of Telangana (excluding Hyderabad): ₹70
+- Telangana: ₹70
 - All other Indian states and union territories: ₹90
 
 Applies to every order regardless of cart subtotal. No Google Maps or external APIs required.
@@ -297,7 +297,7 @@ def calculate_delivery_charge(
     
     Rules:
     - Hyderabad: ₹50.0
-    - Rest of Telangana: ₹70.0
+    - Telangana: ₹70.0
     - All other Indian states and union territories: ₹90.0
     
     Raises HTTPException(status_code=400) if location is ambiguous, missing, or outside India.
@@ -364,7 +364,7 @@ def calculate_delivery_charge(
             detail="Delivery address must include a valid Indian state and city to calculate delivery charges."
         )
 
-    # 5. Handle Telangana (Hyderabad vs Rest of Telangana)
+    # 5. Handle Telangana (Hyderabad vs Telangana)
     if canonical_state == "Telangana":
         # Check if city is Hyderabad or twin cities
         if clean_city in HYDERABAD_ALIASES:
@@ -376,11 +376,11 @@ def calculate_delivery_charge(
                 "description": f"Hyderabad (₹{int(DELIVERY_FEE_HYDERABAD)})"
             }
         
-        # In Telangana, city is required to differentiate Hyderabad (₹50) from Rest of Telangana (₹70)
+        # In Telangana, city is required to differentiate Hyderabad (₹50) from Telangana (₹70)
         if not clean_city:
             raise HTTPException(
                 status_code=400,
-                detail="City name is required to determine delivery charges within Telangana (Hyderabad: ₹50, Rest of Telangana: ₹70)."
+                detail="City name is required to determine delivery charges within Telangana (Hyderabad: ₹50, Telangana: ₹70)."
             )
 
         resolved_city_name = city.strip().title() if city else clean_city.title()
@@ -389,7 +389,7 @@ def calculate_delivery_charge(
             "rate_type": "telangana",
             "city": resolved_city_name,
             "state": canonical_state,
-            "description": f"Rest of Telangana (₹{int(DELIVERY_FEE_TELANGANA)})"
+            "description": f"Telangana (₹{int(DELIVERY_FEE_TELANGANA)})"
         }
 
     # 6. All other Indian States and Union Territories (₹90)
