@@ -53,6 +53,7 @@ def test_generate_order_email_content_complete():
         "email": "ayesha@example.com",
         "phone": "+91 98765 43210",
         "address": "Flat 12, Rose Garden, MG Road, Bangalore, Karnataka - 560038",
+        "landmark": "Near Apollo Pharmacy, Indiranagar",
         "notes": "Please gift-wrap with a birthday note.",
         "date": "25 Oct 2026",
         "total": 8980.0,
@@ -92,6 +93,7 @@ def test_generate_order_email_content_complete():
     assert "ayesha@example.com" in html_body
     assert "+91 98765 43210" in html_body
     assert "Flat 12, Rose Garden, MG Road, Bangalore, Karnataka - 560038" in html_body
+    assert "Near Apollo Pharmacy, Indiranagar" in html_body
     assert "Please gift-wrap with a birthday note." in html_body
     assert "Flower Pendant Necklace" in html_body
     assert "Pearl Drop Earrings" in html_body
@@ -113,6 +115,7 @@ def test_generate_order_email_content_complete():
     assert "Ayesha Khan" in text_body
     assert "ayesha@example.com" in text_body
     assert "+91 98765 43210" in text_body
+    assert "Near Apollo Pharmacy, Indiranagar" in text_body
     assert expected_product_url_1 in text_body
     assert expected_product_url_2 in text_body
     assert ADMIN_ORDERS_URL in text_body
@@ -604,3 +607,46 @@ def test_accurate_payment_status_cod_vs_razorpay():
         ver_call_args = mock_send.call_args[0][0]
         assert "PAID & VERIFIED" in ver_call_args["html"]
 
+
+
+def test_landmark_in_cod_order_and_resend_email():
+    """Verify landmark is stored in MongoDB and transmitted in email notifications."""
+    with patch("resend.Emails.send") as mock_send, \
+         patch("app.resend_service.RESEND_API_KEY", "re_test_key_landmark"), \
+         patch("app.resend_service.ADMIN_EMAIL", "owner@dazzlebydua.com"):
+
+        mock_send.return_value = {"id": "msg_landmark_test_001"}
+
+        order_payload = {
+            "id": "DBD-LANDMARK-01",
+            "customer": "Zainab Sheikh",
+            "email": "zainab@example.com",
+            "phone": "+91 98123 45678",
+            "address": "Flat 301, Lakeview Tower, Indiranagar, Bangalore",
+            "landmark": "Opposite Metro Pillar 142",
+            "total": 4990.0,
+            "paymentMethod": "Cash on Delivery",
+            "paymentStatus": "Pending",
+            "items": [{"id": 1, "name": "Flower Pendant Necklace", "price": 4990.0, "qty": 1}]
+        }
+
+        res = client.post("/api/orders", json=order_payload)
+        assert res.status_code == 201
+        order_data = res.json()
+        assert order_data["landmark"] == "Opposite Metro Pillar 142"
+
+        # Check DB record
+        async def _check_db():
+            db = get_database()
+            saved = await db.orders.find_one({"id": "DBD-LANDMARK-01"})
+            assert saved["landmark"] == "Opposite Metro Pillar 142"
+
+        asyncio.run(_check_db())
+
+        # Check email payload
+        assert mock_send.call_count == 1
+        call_args = mock_send.call_args[0][0]
+        assert "Opposite Metro Pillar 142" in call_args["html"]
+        assert "Opposite Metro Pillar 142" in call_args["text"]
+        assert "Landmark:" in call_args["html"]
+        assert "Landmark:" in call_args["text"]

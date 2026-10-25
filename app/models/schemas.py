@@ -190,6 +190,7 @@ class OrderCreate(BaseModel):
     paymentMethod: Optional[str] = "Cash on Delivery"
     paymentStatus: Optional[str] = "Pending"
     address: Optional[str] = None
+    landmark: Optional[str] = None
     items: List[OrderItem] = Field(default_factory=list)
     razorpay_order_id: Optional[str] = None
     razorpay_payment_id: Optional[str] = None
@@ -213,6 +214,7 @@ class OrderOut(BaseModel):
     paymentMethod: str
     paymentStatus: Optional[str] = "Pending"
     address: Optional[str] = None
+    landmark: Optional[str] = None
     items: List[OrderItem] = Field(default_factory=list)
     razorpay_order_id: Optional[str] = None
     razorpay_payment_id: Optional[str] = None
@@ -226,6 +228,7 @@ class RazorpayOrderCreateRequest(BaseModel):
     email: str
     phone: Optional[str] = None
     address: Optional[str] = None
+    landmark: Optional[str] = None
     notes: Optional[str] = None
     coupon_code: Optional[str] = None
 

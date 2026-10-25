@@ -95,6 +95,7 @@ def generate_order_email_content(order: Dict[str, Any]) -> Dict[str, str]:
     safe_email = html.escape(str(order.get("email") or "Not provided"))
     safe_phone = html.escape(str(order.get("phone") or "Not provided"))
     safe_address = html.escape(str(order.get("address") or "Not provided"))
+    safe_landmark = html.escape(str(order.get("landmark") or "").strip())
     safe_notes = html.escape(str(order.get("notes") or "").strip())
     safe_payment_method = html.escape(str(order.get("paymentMethod") or "Cash on Delivery"))
     safe_payment_status = html.escape(str(order.get("paymentStatus") or "Pending"))
@@ -258,6 +259,10 @@ def generate_order_email_content(order: Dict[str, Any]) -> Dict[str, str]:
                         <td style="color: #777; vertical-align: top;">Delivery Address:</td>
                         <td style="color: #1A1A1A; line-height: 1.4;">{safe_address}</td>
                       </tr>
+                      <tr>
+                        <td style="color: #777; vertical-align: top;">Landmark:</td>
+                        <td style="color: #1A1A1A; font-weight: 600;">{safe_landmark if safe_landmark else 'Not provided'}</td>
+                      </tr>
                     </table>
                   </td>
                 </tr>
@@ -379,7 +384,8 @@ Payment Status: {safe_payment_status}
 Name:    {order.get('customer', 'Valued Customer')}
 Email:   {order.get('email', 'Not provided')}
 Phone:   {order.get('phone', 'Not provided')}
-Address: {order.get('address', 'Not provided')}
+Address:  {order.get('address', 'Not provided')}
+Landmark: {order.get('landmark', 'Not provided')}
 {notes_section_text}
 2. ORDERED PRODUCTS ({len(items)})
 -------------------------------------------------------------------
