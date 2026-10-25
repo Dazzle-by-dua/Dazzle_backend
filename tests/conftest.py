@@ -3,6 +3,8 @@ import pytest
 
 # Enforce isolated test configuration environment before app modules load
 os.environ["ENVIRONMENT"] = "test"
+os.environ["MONGODB_URI"] = ""
+os.environ["MONGODB_DB"] = "test_dazzle_db"
 os.environ["SECRET_KEY"] = "test_environment_secret_key_minimum_32_characters_long_12345"
 os.environ["INITIAL_ADMIN_USERNAME"] = "test_admin"
 os.environ["INITIAL_ADMIN_PASSWORD"] = "TestAdminPass123!"

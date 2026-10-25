@@ -3,7 +3,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from app.main import app
-from app.database import init_db, reset_all_data
+from app.database import init_db, reset_all_data, db_manager
 
 from tests.conftest import (
     TEST_ADMIN_USERNAME,
@@ -34,12 +34,16 @@ def test_root_and_health():
     assert res.json()["brand"] == "Dazzle by Dua"
     assert "MongoDB" in res.json()["database"]
 
-    # Production GET /health endpoint
+    # Production GET /health endpoint reflects database connectivity
+    # (connected for live MongoDB clusters, disconnected when running isolated in-memory mock)
+    expected_db_status = "disconnected" if db_manager.is_mock else "connected"
+    expected_connected = not db_manager.is_mock
+
     res_health = client.get("/health")
     assert res_health.status_code == 200
     health_json = res_health.json()
     assert health_json["status"] == "ok"
-    assert health_json["database"] == "connected"
+    assert health_json["database"] == expected_db_status
 
     # Extended GET /api/health
     res_api_health = client.get("/api/health")
@@ -47,7 +51,8 @@ def test_root_and_health():
     data = res_api_health.json()
     assert data["status"] == "ok"
     assert "database" in data
-    assert data["database"]["connected"] is True
+    assert data["database"]["connected"] is expected_connected
+    assert data["database"]["status"] == expected_db_status
 
 # 2. Authentication
 def test_admin_auth_success_and_failure():
