@@ -26,18 +26,11 @@ from app.razorpay_service import (
 
 router = APIRouter(prefix="/api/orders", tags=["Orders"])
 
-async def calculate_trusted_order_total(
-    db,
-    items: list,
-    coupon_code: Optional[str] = None,
-    destination_lat: Optional[float] = None,
-    destination_lng: Optional[float] = None
-):
+async def calculate_trusted_order_total(db, items: list, coupon_code: Optional[str] = None):
     """
-    Calculate subtotal, discount, shipping/delivery fee, and total from trusted MongoDB product prices
-    and authoritative server-calculated driving route distance.
+    Calculate subtotal, discount, shipping, and total from trusted MongoDB product prices.
     Strictly validates product existence, availability, and positive quantities.
-    Returns (trusted_total, subtotal, discount, verified_items, shipping_fee, delivery_distance_km).
+    Returns (trusted_total, subtotal, discount, verified_items_list).
     """
     subtotal = 0.0
     verified_items = []
@@ -107,40 +100,14 @@ async def calculate_trusted_order_total(
                 elif ctype == "fixed":
                     discount = min(cval, subtotal)
 
-    # Shipping/Delivery fee calculation
-    shipping_fee = 0.0
-    delivery_distance_km = None
-
-    if destination_lat is not None and destination_lng is not None:
-        from app.delivery_service import compute_driving_route_distance, calculate_delivery_fee_for_distance
-        route_res = await compute_driving_route_distance(destination_lat, destination_lng)
-        if route_res.get("success"):
-            delivery_distance_km = route_res.get("distance_km")
-            fee_res = calculate_delivery_fee_for_distance(delivery_distance_km)
-            if not fee_res.get("available"):
-                raise HTTPException(
-                    status_code=400,
-                    detail=fee_res.get("reason", "Selected delivery destination is outside our delivery area.")
-                )
-            shipping_fee = float(fee_res.get("fee", 0.0))
-        else:
-            error_type = route_res.get("error_type")
-            if error_type in ("invalid_coordinates", "no_route"):
-                raise HTTPException(status_code=400, detail=route_res.get("error_message", "Invalid delivery destination."))
-            # Fallback to standard store settings shipping policy if Google Routes is unconfigured
-            settings_doc = await db.settings.find_one({"key": "main"})
-            settings_data = settings_doc.get("data", {}) if settings_doc else {}
-            free_threshold = float(settings_data.get("freeShippingThreshold", 2500))
-            shipping_fee = 0.0 if (subtotal - discount) >= free_threshold else 150.0
-    else:
-        # Standard fallback shipping (Free above freeShippingThreshold, default 2500)
-        settings_doc = await db.settings.find_one({"key": "main"})
-        settings_data = settings_doc.get("data", {}) if settings_doc else {}
-        free_threshold = float(settings_data.get("freeShippingThreshold", 2500))
-        shipping_fee = 0.0 if (subtotal - discount) >= free_threshold else 150.0
+    # Shipping fee calculation (Free above freeShippingThreshold, default 2500)
+    settings_doc = await db.settings.find_one({"key": "main"})
+    settings_data = settings_doc.get("data", {}) if settings_doc else {}
+    free_threshold = float(settings_data.get("freeShippingThreshold", 2500))
+    shipping_fee = 0.0 if (subtotal - discount) >= free_threshold else 150.0
 
     total = max(0.0, round(subtotal - discount + shipping_fee, 2))
-    return total, subtotal, discount, verified_items, shipping_fee, delivery_distance_km
+    return total, subtotal, discount, verified_items
 
 
 # ========================================================
@@ -162,12 +129,10 @@ async def create_razorpay_order_endpoint(payload: RazorpayOrderCreateRequest):
         raise HTTPException(status_code=400, detail="Cart is empty. Cannot create order.")
 
     db = get_database()
-    trusted_total, subtotal, discount, verified_items, shipping_fee, distance_km = await calculate_trusted_order_total(
+    trusted_total, subtotal, discount, verified_items = await calculate_trusted_order_total(
         db=db,
         items=payload.items,
-        coupon_code=payload.coupon_code,
-        destination_lat=payload.destination_lat,
-        destination_lng=payload.destination_lng
+        coupon_code=payload.coupon_code
     )
 
     if trusted_total < 1.0:
@@ -203,13 +168,6 @@ async def create_razorpay_order_endpoint(payload: RazorpayOrderCreateRequest):
         "total": trusted_total,
         "subtotal": subtotal,
         "discount": discount,
-        "shipping_fee": shipping_fee,
-        "delivery_fee": shipping_fee,
-        "delivery_distance_km": distance_km,
-        "destination_lat": payload.destination_lat,
-        "destination_lng": payload.destination_lng,
-        "place_id": payload.place_id,
-        "formatted_address": payload.formatted_address,
         "status": "Payment Pending",
         "paymentMethod": "Razorpay Online",
         "paymentStatus": "Pending",
@@ -454,45 +412,13 @@ async def create_order(payload: OrderCreate):
     # Never mark orders as Paid without cryptographic gateway verification.
     pay_status = "Pending"
 
-    # Server-side delivery fee calculation if destination coordinates are provided
-    shipping_fee = 0.0
-    distance_km = None
-    if payload.destination_lat is not None and payload.destination_lng is not None:
-        from app.delivery_service import compute_driving_route_distance, calculate_delivery_fee_for_distance
-        route_res = await compute_driving_route_distance(payload.destination_lat, payload.destination_lng)
-        if route_res.get("success"):
-            distance_km = route_res.get("distance_km")
-            fee_res = calculate_delivery_fee_for_distance(distance_km)
-            if not fee_res.get("available"):
-                raise HTTPException(
-                    status_code=400,
-                    detail=fee_res.get("reason", "Selected delivery destination is outside our delivery area.")
-                )
-            shipping_fee = float(fee_res.get("fee", 0.0))
-        else:
-            error_type = route_res.get("error_type")
-            if error_type in ("invalid_coordinates", "no_route"):
-                raise HTTPException(status_code=400, detail=route_res.get("error_message", "Invalid delivery destination."))
-
-    # Authoritative total calculation: if delivery_fee was submitted, adjust using trusted shipping fee
-    trusted_total = float(payload.total)
-    if shipping_fee > 0 and payload.delivery_fee is not None:
-        trusted_total = round(payload.total - float(payload.delivery_fee or 0.0) + shipping_fee, 2)
-
     doc = {
         "id": order_id,
         "customer": payload.customer,
         "email": payload.email,
         "phone": payload.phone or "",
         "date": formatted_date,
-        "total": trusted_total,
-        "shipping_fee": shipping_fee,
-        "delivery_fee": shipping_fee,
-        "delivery_distance_km": distance_km,
-        "destination_lat": payload.destination_lat,
-        "destination_lng": payload.destination_lng,
-        "place_id": payload.place_id,
-        "formatted_address": payload.formatted_address,
+        "total": float(payload.total),
         "status": payload.status or "Processing",
         "paymentMethod": payload.paymentMethod or "Cash on Delivery",
         "paymentStatus": pay_status,

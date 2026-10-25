@@ -263,13 +263,6 @@ def generate_order_email_content(order: Dict[str, Any]) -> Dict[str, str]:
                         <td style="color: #777; vertical-align: top;">Landmark:</td>
                         <td style="color: #1A1A1A; font-weight: 600;">{safe_landmark if safe_landmark else 'Not provided'}</td>
                       </tr>
-                      {f'''<tr>
-                        <td style="color: #777; vertical-align: top;">Driving Distance:</td>
-                        <td style="color: #1A1A1A; font-weight: 600;">
-                          {order.get("delivery_distance_km")} km &bull;
-                          <a href="https://www.google.com/maps/search/?api=1&query={order.get('destination_lat')},{order.get('destination_lng')}" target="_blank" style="color: #C5A880; text-decoration: none;">View Pin on Google Maps &rarr;</a>
-                        </td>
-                      </tr>''' if order.get("delivery_distance_km") and order.get("destination_lat") else ''}
                     </table>
                   </td>
                 </tr>

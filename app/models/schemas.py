@@ -168,39 +168,7 @@ class ValidateCouponResponse(BaseModel):
     coupon: Optional[CouponOut] = None
 
 # ========================================================
-# 5. Delivery & Route Schemas
-# ========================================================
-class DeliveryQuoteRequest(BaseModel):
-    place_id: Optional[str] = None
-    latitude: float
-    longitude: float
-    formatted_address: Optional[str] = None
-    postal_code: Optional[str] = None
-    cart_subtotal: Optional[float] = None
-
-class DeliveryQuoteResponse(BaseModel):
-    success: bool
-    available: bool
-    distance_km: Optional[float] = None
-    distance_meters: Optional[int] = None
-    delivery_fee: Optional[float] = None
-    duration_text: Optional[str] = None
-    message: str
-    origin_postal_code: str = "500013"
-    destination_postal_code: Optional[str] = None
-    fee_configured: bool = True
-    error_type: Optional[str] = None
-
-class DeliveryConfigResponse(BaseModel):
-    enabled: bool
-    google_maps_browser_key: Optional[str] = None
-    shop_origin: Dict[str, Any]
-    max_delivery_distance_km: float
-    fee_configured: bool
-
-
-# ========================================================
-# 6. Order Schemas
+# 5. Order Schemas
 # ========================================================
 class OrderItem(BaseModel):
     id: Union[int, str]
@@ -223,12 +191,6 @@ class OrderCreate(BaseModel):
     paymentStatus: Optional[str] = "Pending"
     address: Optional[str] = None
     landmark: Optional[str] = None
-    destination_lat: Optional[float] = None
-    destination_lng: Optional[float] = None
-    place_id: Optional[str] = None
-    delivery_distance_km: Optional[float] = None
-    delivery_fee: Optional[float] = None
-    formatted_address: Optional[str] = None
     items: List[OrderItem] = Field(default_factory=list)
     razorpay_order_id: Optional[str] = None
     razorpay_payment_id: Optional[str] = None
@@ -253,12 +215,6 @@ class OrderOut(BaseModel):
     paymentStatus: Optional[str] = "Pending"
     address: Optional[str] = None
     landmark: Optional[str] = None
-    destination_lat: Optional[float] = None
-    destination_lng: Optional[float] = None
-    place_id: Optional[str] = None
-    delivery_distance_km: Optional[float] = None
-    delivery_fee: Optional[float] = None
-    formatted_address: Optional[str] = None
     items: List[OrderItem] = Field(default_factory=list)
     razorpay_order_id: Optional[str] = None
     razorpay_payment_id: Optional[str] = None
@@ -273,12 +229,6 @@ class RazorpayOrderCreateRequest(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     landmark: Optional[str] = None
-    destination_lat: Optional[float] = None
-    destination_lng: Optional[float] = None
-    place_id: Optional[str] = None
-    delivery_distance_km: Optional[float] = None
-    delivery_fee: Optional[float] = None
-    formatted_address: Optional[str] = None
     notes: Optional[str] = None
     coupon_code: Optional[str] = None
 
