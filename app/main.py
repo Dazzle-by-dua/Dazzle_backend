@@ -20,7 +20,8 @@ from app.routers import (
     upload,
     dashboard,
     backup,
-    webhooks
+    webhooks,
+    customer_auth
 )
 
 
@@ -79,6 +80,7 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 # Include all modular routers
 app.include_router(auth.router)
+app.include_router(customer_auth.router)
 app.include_router(products.router)
 app.include_router(categories.router)
 app.include_router(orders.router)

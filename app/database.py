@@ -23,8 +23,10 @@ def _sanitize_error(msg: Any) -> str:
     """Mask any MongoDB credentials or sensitive URI patterns from messages."""
     return re.sub(r'mongodb(?:\+srv)?://[^@\s]+@', 'mongodb+srv://***:***@', str(msg))
 
+from app.security import get_password_hash
+
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    return get_password_hash(password)
 
 def clean_doc(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not doc:
@@ -185,6 +187,16 @@ class DatabaseManager:
             await self.db.coupons.create_index("code", unique=True)
             await self.db.combos.create_index("id", unique=True)
             await self.db.media.create_index("filename", unique=True)
+
+            # Customer accounts & authentication indexes
+            await self.db.customers.create_index("email", unique=True)
+            await self.db.customers.create_index("id", unique=True)
+            await self.db.customer_signups.create_index("email", unique=True)
+            await self.db.customer_signups.create_index("expires_at", expireAfterSeconds=0)
+            await self.db.password_resets.create_index("email")
+            await self.db.password_resets.create_index("expires_at", expireAfterSeconds=0)
+            await self.db.customer_login_attempts.create_index("email")
+            await self.db.customer_login_attempts.create_index("expires_at", expireAfterSeconds=0)
         except Exception as e:
             logger.warning(f"Index creation notice: {e}")
 

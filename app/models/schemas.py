@@ -472,3 +472,50 @@ class DashboardStatsOut(BaseModel):
     recentOrders: List[OrderOut]
     lowStockProducts: List[ProductOut]
     recentReviews: List[ReviewOut]
+
+# ========================================================
+# 14. Customer Authentication & Profile Schemas
+# ========================================================
+class CustomerSignupInitiateRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=100)
+    email: str = Field(..., min_length=5, max_length=254)
+
+class CustomerSignupResendOTPRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=254)
+
+class CustomerSignupVerifyOTPRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=254)
+    otp: str = Field(..., min_length=6, max_length=6)
+
+class CustomerSignupCompleteRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=254)
+    signup_token: str = Field(..., min_length=16, max_length=256)
+    password: str = Field(..., min_length=12, max_length=128)
+    confirm_password: str = Field(..., min_length=12, max_length=128)
+
+class CustomerLoginRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=254)
+    password: str = Field(..., min_length=1, max_length=128)
+    remember_me: Optional[bool] = False
+
+class CustomerForgotPasswordRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=254)
+
+class CustomerResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=16, max_length=256)
+    email: str = Field(..., min_length=5, max_length=254)
+    new_password: str = Field(..., min_length=12, max_length=128)
+    confirm_password: str = Field(..., min_length=12, max_length=128)
+
+class CustomerProfileOut(BaseModel):
+    id: str
+    name: str
+    email: str
+    phone: Optional[str] = ""
+    address: Optional[str] = ""
+    created_at: Optional[str] = None
+
+class CustomerProfileUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=2, max_length=100)
+    phone: Optional[str] = Field(None, max_length=30)
+    address: Optional[str] = Field(None, max_length=300)

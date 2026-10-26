@@ -14,13 +14,13 @@ import resend
 from app.config import (
     RESEND_API_KEY,
     ADMIN_EMAIL,
-    RESEND_FROM_EMAIL
+    RESEND_FROM_EMAIL,
+    FRONTEND_BASE_URL,
+    IS_PRODUCTION
 )
 
 logger = logging.getLogger("dazzle.resend")
 
-# Frontend URL configuration
-FRONTEND_BASE_URL = "https://dazzle-by-dua.github.io/Dazzle_frontend"
 ADMIN_ORDERS_URL = f"{FRONTEND_BASE_URL}/admin/index.html#orders"
 IST_TIMEZONE = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
@@ -538,3 +538,299 @@ async def send_new_order_admin_notification(order: Dict[str, Any], db=None) -> D
             "order_id": order_id,
             "error": str(err)
         }
+
+
+# =========================================================================
+# Customer Authentication Email Templates & Dispatchers
+# =========================================================================
+
+async def send_customer_otp_email(email: str, name: str, otp: str) -> Dict[str, Any]:
+    """
+    Send cryptographically generated 6-digit OTP to customer for email verification.
+    """
+    if not RESEND_API_KEY:
+        if not IS_PRODUCTION:
+            logger.info(f"[DEV/TEST] Resend API key not set. Simulated OTP email sent to {email}.")
+            return {"success": True, "status": "simulated"}
+        logger.error("Resend API key missing in production. Cannot deliver OTP email.")
+        return {"success": False, "error": "Email service not configured"}
+
+    safe_name = html.escape(name or "Valued Customer")
+    safe_otp = html.escape(str(otp).strip())
+
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Your Verification Code - Dazzle by Dua</title>
+</head>
+<body style="margin:0;padding:0;background-color:#F5F5F3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#222;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:40px 15px;background-color:#F5F5F3;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" style="max-width:540px;background:#FFF;border-radius:8px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,0.06);border:1px solid #E5E5E0;" cellspacing="0" cellpadding="0">
+          <tr>
+            <td style="background-color:#1A1A1A;padding:26px 30px;text-align:center;border-bottom:3px solid #C5A880;">
+              <h1 style="margin:0;color:#FFF;font-size:22px;letter-spacing:1.5px;font-weight:600;text-transform:uppercase;">Dazzle by Dua</h1>
+              <div style="color:#C5A880;font-size:11px;letter-spacing:2px;text-transform:uppercase;margin-top:4px;">Fine Jewellery</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px 30px;">
+              <div style="font-size:16px;font-weight:600;color:#1A1A1A;margin-bottom:12px;">Dear {safe_name},</div>
+              <p style="font-size:14px;line-height:1.6;color:#555;margin:0 0 20px;">
+                Thank you for choosing Dazzle by Dua. To complete your account registration, please enter the six-digit verification code below:
+              </p>
+              
+              <div style="background:#FAF8F5;border:1px solid #E2D1B8;border-radius:8px;padding:22px;text-align:center;margin:24px 0;">
+                <div style="font-size:32px;font-weight:700;letter-spacing:8px;color:#1A1A1A;font-family:monospace;">
+                  {safe_otp}
+                </div>
+                <div style="font-size:12px;color:#888;margin-top:8px;">
+                  This code expires in <strong>5 minutes</strong>.
+                </div>
+              </div>
+
+              <p style="font-size:13px;line-height:1.6;color:#777;margin:0 0 16px;">
+                For your security, never share this code with anyone. Dazzle by Dua representatives will never ask for your verification code.
+              </p>
+              <p style="font-size:12px;color:#999;margin:0;">
+                If you did not request this verification code, you can safely disregard this email.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#F5F5F3;padding:18px 30px;text-align:center;font-size:11px;color:#888;border-top:1px solid #E5E5E0;">
+              &copy; {datetime.datetime.now().year} Dazzle by Dua. All rights reserved.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+
+    plain_text = f"""DAZZLE BY DUA - FINE JEWELLERY
+Email Verification Code
+
+Dear {name or 'Valued Customer'},
+
+Your six-digit verification code is: {otp}
+
+This code expires in 5 minutes.
+Never share this code with anyone.
+
+If you did not request this code, you can safely ignore this email.
+
+(c) {datetime.datetime.now().year} Dazzle by Dua.
+"""
+
+    resend.api_key = RESEND_API_KEY
+    params = {
+        "from": RESEND_FROM_EMAIL,
+        "to": [email],
+        "subject": "Your Verification Code – Dazzle by Dua",
+        "html": html_content,
+        "text": plain_text
+    }
+
+    try:
+        response = await asyncio.to_thread(resend.Emails.send, params)
+        res_id = response.get("id") if isinstance(response, dict) else getattr(response, "id", None)
+        logger.info(f"OTP verification email sent to {email} (ID: {res_id})")
+        return {"success": True, "id": res_id}
+    except Exception as e:
+        logger.error(f"Failed to send customer OTP email to {email}: {e}")
+        return {"success": False, "error": str(e)}
+
+
+async def send_customer_password_reset_email(email: str, name: str, reset_link: str) -> Dict[str, Any]:
+    """
+    Send branded password reset link to customer via Resend.
+    """
+    if not RESEND_API_KEY:
+        if not IS_PRODUCTION:
+            logger.info(f"[DEV/TEST] Resend API key not set. Simulated Password Reset link for {email}: {reset_link}")
+            return {"success": True, "status": "simulated"}
+        logger.error("Resend API key missing in production. Cannot deliver password reset email.")
+        return {"success": False, "error": "Email service not configured"}
+
+    safe_name = html.escape(name or "Valued Customer")
+    safe_link = html.escape(reset_link, quote=True)
+
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Reset Your Password - Dazzle by Dua</title>
+</head>
+<body style="margin:0;padding:0;background-color:#F5F5F3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#222;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:40px 15px;background-color:#F5F5F3;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" style="max-width:540px;background:#FFF;border-radius:8px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,0.06);border:1px solid #E5E5E0;" cellspacing="0" cellpadding="0">
+          <tr>
+            <td style="background-color:#1A1A1A;padding:26px 30px;text-align:center;border-bottom:3px solid #C5A880;">
+              <h1 style="margin:0;color:#FFF;font-size:22px;letter-spacing:1.5px;font-weight:600;text-transform:uppercase;">Dazzle by Dua</h1>
+              <div style="color:#C5A880;font-size:11px;letter-spacing:2px;text-transform:uppercase;margin-top:4px;">Fine Jewellery</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px 30px;">
+              <div style="font-size:16px;font-weight:600;color:#1A1A1A;margin-bottom:12px;">Dear {safe_name},</div>
+              <p style="font-size:14px;line-height:1.6;color:#555;margin:0 0 20px;">
+                We received a request to reset the password for your Dazzle by Dua customer account. Click the button below to choose a new password:
+              </p>
+              
+              <div style="text-align:center;margin:28px 0;">
+                <a href="{safe_link}" style="display:inline-block;background-color:#1A1A1A;color:#D4AF7C;border:1px solid #D4AF7C;font-weight:600;font-size:14px;text-decoration:none;padding:14px 32px;border-radius:4px;letter-spacing:1px;text-transform:uppercase;">
+                  Reset Password &rarr;
+                </a>
+              </div>
+
+              <div style="background:#FAF8F5;border-left:3px solid #C5A880;padding:12px 16px;margin:20px 0;font-size:12px;color:#666;">
+                This link is valid for <strong>20 minutes</strong> and can only be used once.
+              </div>
+
+              <p style="font-size:12px;line-height:1.5;color:#888;margin:20px 0 8px;">
+                If the button above does not work, copy and paste this link into your browser:
+              </p>
+              <div style="font-size:11px;color:#999;word-break:break-all;background:#F9F9F9;padding:8px 10px;border-radius:4px;">
+                {safe_link}
+              </div>
+
+              <p style="font-size:12px;color:#999;margin-top:20px;">
+                If you did not request a password reset, please disregard this email. Your password will remain unchanged.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#F5F5F3;padding:18px 30px;text-align:center;font-size:11px;color:#888;border-top:1px solid #E5E5E0;">
+              &copy; {datetime.datetime.now().year} Dazzle by Dua. All rights reserved.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+
+    plain_text = f"""DAZZLE BY DUA - FINE JEWELLERY
+Password Reset Request
+
+Dear {name or 'Valued Customer'},
+
+We received a request to reset your password. Click or copy the following link to choose a new password:
+{reset_link}
+
+This link is valid for 20 minutes and is single-use only.
+
+If you did not request a password reset, you can safely ignore this email.
+
+(c) {datetime.datetime.now().year} Dazzle by Dua.
+"""
+
+    resend.api_key = RESEND_API_KEY
+    params = {
+        "from": RESEND_FROM_EMAIL,
+        "to": [email],
+        "subject": "Reset Your Password – Dazzle by Dua",
+        "html": html_content,
+        "text": plain_text
+    }
+
+    try:
+        response = await asyncio.to_thread(resend.Emails.send, params)
+        res_id = response.get("id") if isinstance(response, dict) else getattr(response, "id", None)
+        logger.info(f"Password reset email sent to {email} (ID: {res_id})")
+        return {"success": True, "id": res_id}
+    except Exception as e:
+        logger.error(f"Failed to send password reset email to {email}: {e}")
+        return {"success": False, "error": str(e)}
+
+
+async def send_customer_password_changed_notification(email: str, name: str) -> Dict[str, Any]:
+    """
+    Send notification to customer confirming that their password was successfully changed.
+    """
+    if not RESEND_API_KEY:
+        if not IS_PRODUCTION:
+            logger.info(f"[DEV/TEST] Resend API key not set. Simulated Password Changed confirmation for {email}.")
+            return {"success": True, "status": "simulated"}
+        return {"success": False, "error": "Email service not configured"}
+
+    safe_name = html.escape(name or "Valued Customer")
+
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Password Changed - Dazzle by Dua</title>
+</head>
+<body style="margin:0;padding:0;background-color:#F5F5F3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#222;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:40px 15px;background-color:#F5F5F3;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" style="max-width:540px;background:#FFF;border-radius:8px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,0.06);border:1px solid #E5E5E0;" cellspacing="0" cellpadding="0">
+          <tr>
+            <td style="background-color:#1A1A1A;padding:26px 30px;text-align:center;border-bottom:3px solid #C5A880;">
+              <h1 style="margin:0;color:#FFF;font-size:22px;letter-spacing:1.5px;font-weight:600;text-transform:uppercase;">Dazzle by Dua</h1>
+              <div style="color:#C5A880;font-size:11px;letter-spacing:2px;text-transform:uppercase;margin-top:4px;">Fine Jewellery</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px 30px;">
+              <div style="font-size:16px;font-weight:600;color:#1A1A1A;margin-bottom:12px;">Dear {safe_name},</div>
+              <p style="font-size:14px;line-height:1.6;color:#555;margin:0 0 20px;">
+                Your password for Dazzle by Dua was successfully changed. All existing sessions have been signed out for your security.
+              </p>
+              <div style="background:#E8F5E9;border-left:4px solid #2E7D32;padding:12px 16px;margin:20px 0;font-size:13px;color:#1B5E20;">
+                &#10003; Password successfully updated.
+              </div>
+              <p style="font-size:13px;line-height:1.6;color:#777;margin:0;">
+                If you did not perform this change, please contact our support team immediately.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#F5F5F3;padding:18px 30px;text-align:center;font-size:11px;color:#888;border-top:1px solid #E5E5E0;">
+              &copy; {datetime.datetime.now().year} Dazzle by Dua. All rights reserved.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+
+    plain_text = f"""DAZZLE BY DUA - FINE JEWELLERY
+Password Changed Successfully
+
+Dear {name or 'Valued Customer'},
+
+Your password for Dazzle by Dua has been changed successfully. All previous sessions have been signed out.
+
+If you did not perform this change, please contact us immediately.
+
+(c) {datetime.datetime.now().year} Dazzle by Dua.
+"""
+
+    resend.api_key = RESEND_API_KEY
+    params = {
+        "from": RESEND_FROM_EMAIL,
+        "to": [email],
+        "subject": "Your Password Has Been Changed – Dazzle by Dua",
+        "html": html_content,
+        "text": plain_text
+    }
+
+    try:
+        response = await asyncio.to_thread(resend.Emails.send, params)
+        res_id = response.get("id") if isinstance(response, dict) else getattr(response, "id", None)
+        return {"success": True, "id": res_id}
+    except Exception as e:
+        logger.error(f"Failed to send password changed notification to {email}: {e}")
+        return {"success": False, "error": str(e)}

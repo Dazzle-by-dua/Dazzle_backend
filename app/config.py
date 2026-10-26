@@ -75,10 +75,16 @@ RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "").strip()
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "").strip()
 RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET", "").strip()
 
-# Resend Email Service (Admin Order Notifications)
+# Resend Email Service (Admin Order Notifications & Customer Auth)
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip()
 RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "").strip() or "Dazzle by Dua <onboarding@resend.dev>"
+
+# Customer Authentication & Frontend Configuration
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://dazzle-by-dua.github.io/Dazzle_frontend").strip().rstrip("/")
+CUSTOMER_ACCESS_TOKEN_EXPIRE_DAYS = int(os.getenv("CUSTOMER_ACCESS_TOKEN_EXPIRE_DAYS", "7"))
+OTP_EXPIRE_MINUTES = int(os.getenv("OTP_EXPIRE_MINUTES", "5"))
+RESET_TOKEN_EXPIRE_MINUTES = int(os.getenv("RESET_TOKEN_EXPIRE_MINUTES", "20"))
 
 # Fixed Location-Based Delivery Charges (INR)
 # Hyderabad: ₹50, Telangana: ₹70, All other Indian States/UTs: ₹90

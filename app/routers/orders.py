@@ -2,7 +2,7 @@ import random
 import logging
 import datetime
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query, Depends, status
 from app.database import get_database, clean_doc, clean_docs
 
 logger = logging.getLogger("dazzle.orders")
@@ -18,7 +18,11 @@ from app.models.schemas import (
     DeliveryChargeResponse
 )
 from app.delivery_rules import calculate_delivery_charge
-from app.security import get_current_admin
+from app.security import (
+    get_current_admin,
+    get_current_admin_optional,
+    get_current_customer_optional
+)
 from app.razorpay_service import (
     create_razorpay_order,
     verify_razorpay_signature,
@@ -415,12 +419,35 @@ async def get_orders(
     return clean_docs(items)
 
 @router.get("/{order_id}", response_model=OrderOut)
-async def get_order_by_id(order_id: str, admin: dict = Depends(get_current_admin)):
+async def get_order_by_id(
+    order_id: str,
+    admin: Optional[dict] = Depends(get_current_admin_optional),
+    customer: Optional[dict] = Depends(get_current_customer_optional)
+):
     db = get_database()
     order = await db.orders.find_one({"id": order_id})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
-    return clean_doc(order)
+
+    # Admin has full access to inspect any order
+    if admin:
+        return clean_doc(order)
+
+    # Customer can only view their own order
+    if customer:
+        order_email = (order.get("email") or "").strip().lower()
+        cust_email = (customer.get("email") or "").strip().lower()
+        if order_email == cust_email:
+            return clean_doc(order)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. You cannot view another customer's order."
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication required to view order details."
+    )
 
 @router.post("", response_model=OrderOut, status_code=201)
 async def create_order(payload: OrderCreate):
