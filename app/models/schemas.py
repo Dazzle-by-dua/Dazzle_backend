@@ -490,8 +490,8 @@ class CustomerSignupVerifyOTPRequest(BaseModel):
 class CustomerSignupCompleteRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=254)
     signup_token: str = Field(..., min_length=16, max_length=256)
-    password: str = Field(..., min_length=12, max_length=128)
-    confirm_password: str = Field(..., min_length=12, max_length=128)
+    password: str = Field(..., min_length=8, max_length=128)
+    confirm_password: str = Field(..., min_length=8, max_length=128)
 
 class CustomerLoginRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=254)
@@ -504,8 +504,8 @@ class CustomerForgotPasswordRequest(BaseModel):
 class CustomerResetPasswordRequest(BaseModel):
     token: str = Field(..., min_length=16, max_length=256)
     email: str = Field(..., min_length=5, max_length=254)
-    new_password: str = Field(..., min_length=12, max_length=128)
-    confirm_password: str = Field(..., min_length=12, max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
+    confirm_password: str = Field(..., min_length=8, max_length=128)
 
 class CustomerProfileOut(BaseModel):
     id: str

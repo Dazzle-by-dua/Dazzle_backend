@@ -360,8 +360,8 @@ async def signup_complete(payload: CustomerSignupCompleteRequest, response: Resp
     if password != confirm_password:
         raise HTTPException(status_code=400, detail="Passwords do not match.")
 
-    if len(password) < 12:
-        raise HTTPException(status_code=400, detail="Password must be at least 12 characters long.")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters long.")
 
     if len(password) > 128:
         raise HTTPException(status_code=400, detail="Password cannot exceed 128 characters.")
@@ -690,8 +690,8 @@ async def complete_password_reset(payload: CustomerResetPasswordRequest):
     if new_pass != confirm_pass:
         raise HTTPException(status_code=400, detail="Passwords do not match.")
 
-    if len(new_pass) < 12:
-        raise HTTPException(status_code=400, detail="Password must be at least 12 characters long.")
+    if len(new_pass) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters long.")
 
     if len(new_pass) > 128:
         raise HTTPException(status_code=400, detail="Password cannot exceed 128 characters.")

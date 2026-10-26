@@ -134,12 +134,12 @@ def test_signup_stage3_password_creation_and_token_invalidation():
     assert res_mismatch.status_code == 400
     assert "match" in res_mismatch.json()["detail"].lower()
 
-    # Stage 3: Password too short (< 12 characters)
+    # Stage 3: Password too short (< 8 characters)
     res_short = client.post("/api/customer/auth/signup/complete", json={
         "email": email,
         "signup_token": signup_token,
-        "password": "Short123!",
-        "confirm_password": "Short123!"
+        "password": "Pass1!",
+        "confirm_password": "Pass1!"
     })
     assert res_short.status_code in (400, 422)
 
