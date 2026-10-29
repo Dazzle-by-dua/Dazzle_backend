@@ -51,6 +51,14 @@ async def upload_image(
     if len(file_bytes) == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
+    # Maximum allowed upload size (10 MB)
+    MAX_FILE_SIZE = 10 * 1024 * 1024
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Image size exceeds the 10 MB limit (uploaded: {len(file_bytes) / (1024 * 1024):.1f} MB). Please choose a smaller file."
+        )
+
     original_filename = Path(file.filename or "image.jpg").name
     display_title = title or original_filename.rsplit(".", 1)[0].replace("_", " ").title()
 
@@ -64,25 +72,29 @@ async def upload_image(
     secure_url = cloud_result["secure_url"]
     public_id = cloud_result["public_id"]
 
-    # Save reference to MongoDB 'media' collection
-    db = get_database()
-    last_m = await db.media.find({}).sort("id", -1).limit(1).to_list(1)
-    mid = (last_m[0]["id"] + 1) if last_m and "id" in last_m[0] else 1
-
+    # Save reference to MongoDB 'media' collection (best-effort, non-fatal for upload)
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    media_doc = {
-        "id": mid,
-        "filename": original_filename,
-        "title": display_title,
-        "type": "Cloudinary Asset",
-        "url": secure_url,
-        "secure_url": secure_url,
-        "public_id": public_id,
-        "size": cloud_result.get("bytes", len(file_bytes)),
-        "mime_type": file.content_type,
-        "created_at": now_iso
-    }
-    await db.media.insert_one(media_doc)
+    try:
+        db = get_database()
+        last_m = await db.media.find({}).sort("id", -1).limit(1).to_list(1)
+        mid = (last_m[0]["id"] + 1) if last_m and "id" in last_m[0] else 1
+
+        media_doc = {
+            "id": mid,
+            "filename": original_filename,
+            "title": display_title,
+            "type": "Cloudinary Asset",
+            "url": secure_url,
+            "secure_url": secure_url,
+            "public_id": public_id,
+            "size": cloud_result.get("bytes", len(file_bytes)),
+            "mime_type": file.content_type,
+            "created_at": now_iso
+        }
+        await db.media.insert_one(media_doc)
+    except Exception as db_err:
+        import logging
+        logging.getLogger("dazzle.upload").warning(f"Could not record media asset to database: {db_err}")
 
     return {
         "success": True,

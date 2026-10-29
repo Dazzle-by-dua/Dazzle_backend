@@ -1,5 +1,6 @@
 import os
 import re
+import asyncio
 import logging
 from typing import Optional, Dict, Any
 import cloudinary
@@ -136,7 +137,8 @@ async def upload_image_to_cloudinary(
     folder: str = "dazzle_by_dua"
 ) -> Dict[str, Any]:
     """
-    Upload an image to Cloudinary and return secure URL and public_id.
+    Upload an image to Cloudinary asynchronously via thread pool
+    and return secure URL and public_id.
     """
     if not is_cloudinary_configured():
         raise HTTPException(
@@ -150,13 +152,16 @@ async def upload_image_to_cloudinary(
             "folder": folder,
             "resource_type": "image",
             "overwrite": True,
-            "unique_filename": True
+            "unique_filename": True,
+            "use_filename": True
         }
         if filename:
             clean_name = filename.rsplit(".", 1)[0].replace(" ", "_").lower()
-            upload_params["public_id_prefix"] = clean_name
+            clean_name = re.sub(r'[^a-zA-Z0-9_\-]', '', clean_name)
+            if clean_name:
+                upload_params["filename_override"] = clean_name
 
-        result = cloudinary.uploader.upload(file_content, **upload_params)
+        result = await asyncio.to_thread(cloudinary.uploader.upload, file_content, **upload_params)
 
         return {
             "secure_url": result.get("secure_url"),
@@ -186,7 +191,7 @@ async def delete_image_from_cloudinary(public_id: str) -> Dict[str, Any]:
         )
 
     try:
-        result = cloudinary.uploader.destroy(public_id, invalidate=True)
+        result = await asyncio.to_thread(cloudinary.uploader.destroy, public_id, invalidate=True)
         return result
     except Exception as e:
         safe_err = _sanitize_cloudinary_error(e)

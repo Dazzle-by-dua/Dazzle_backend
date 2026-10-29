@@ -340,3 +340,39 @@ def test_backup_and_restore():
     # Reset
     res_reset = client.post("/api/backup/reset", headers=headers)
     assert res_reset.status_code == 200
+
+# 11. Image Upload & Validation
+def test_upload_validation_and_cloudinary():
+    headers = get_auth_headers()
+
+    # Reject non-image MIME type
+    res_bad_type = client.post(
+        "/api/upload/image",
+        headers=headers,
+        files={"file": ("test.txt", b"plain text", "text/plain")}
+    )
+    assert res_bad_type.status_code == 400
+
+    # Reject file exceeding 10MB
+    large_payload = b"0" * (11 * 1024 * 1024)
+    res_large = client.post(
+        "/api/upload/image",
+        headers=headers,
+        files={"file": ("large.jpg", large_payload, "image/jpeg")}
+    )
+    assert res_large.status_code == 413
+
+    # Upload valid image to Cloudinary
+    gif_bytes = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
+    res_ok = client.post(
+        "/api/upload/image",
+        headers=headers,
+        data={"folder": "dazzle_by_dua/products"},
+        files={"file": ("secondary_test.gif", gif_bytes, "image/gif")}
+    )
+    assert res_ok.status_code == 200
+    data = res_ok.json()
+    assert data["success"] is True
+    assert "secure_url" in data
+    assert data["secure_url"].startswith("http")
+    assert "public_id" in data
