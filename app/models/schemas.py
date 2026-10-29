@@ -77,11 +77,24 @@ class ReviewBase(BaseModel):
     text: str
     date: Optional[str] = None
     verified: Optional[bool] = True
-    approved: Optional[bool] = True
+    approved: Optional[bool] = False
     product: Optional[str] = "General"
+    product_id: Optional[Union[int, str]] = None
+    customer_id: Optional[str] = None
+    customer_email: Optional[str] = None
+    order_id: Optional[str] = None
 
-class ReviewCreate(ReviewBase):
+class ReviewCreate(BaseModel):
     id: Optional[int] = None
+    name: Optional[str] = None
+    rating: int = 5
+    text: str
+    date: Optional[str] = None
+    verified: Optional[bool] = None
+    approved: Optional[bool] = None
+    product: Optional[str] = None
+    product_id: Optional[Union[int, str]] = None
+    order_id: Optional[str] = None
 
 class ReviewUpdate(BaseModel):
     name: Optional[str] = None
@@ -91,12 +104,27 @@ class ReviewUpdate(BaseModel):
     verified: Optional[bool] = None
     approved: Optional[bool] = None
     product: Optional[str] = None
+    product_id: Optional[Union[int, str]] = None
+    customer_id: Optional[str] = None
+    customer_email: Optional[str] = None
 
 class ReviewStatusUpdate(BaseModel):
     approved: bool
 
 class ReviewOut(ReviewBase):
     id: int
+    created_at: Optional[str] = None
+
+class ReviewEligibilityResponse(BaseModel):
+    eligible: bool
+    can_review: bool
+    reason: str  # "eligible", "login_required", "not_purchased", "already_reviewed", "product_not_found"
+    message: str
+    customer_name: Optional[str] = None
+    customer_email: Optional[str] = None
+    product_id: Optional[Union[int, str]] = None
+    product_name: Optional[str] = None
+    existing_review: Optional[Dict[str, Any]] = None
 
 # ========================================================
 # 4. Offers & Combos Schemas
