@@ -537,6 +537,10 @@ async def update_order_status(order_id: str, payload: OrderStatusUpdate, admin: 
     update_data = {"status": payload.status, "updated_at": now_iso}
     if payload.paymentStatus:
         update_data["paymentStatus"] = payload.paymentStatus
+    elif payload.status == "Delivered":
+        pay_method = str(existing.get("paymentMethod") or "").lower()
+        if "cash on delivery" in pay_method or pay_method == "cod":
+            update_data["paymentStatus"] = "Paid"
 
     await db.orders.update_one(
         {"id": order_id},

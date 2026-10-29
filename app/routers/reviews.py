@@ -108,7 +108,9 @@ async def check_customer_review_eligibility(
         is_cod = ("cash on delivery" in payment_method or payment_method == "cod")
         is_completed_cod = is_cod and (order_status in ["delivered", "completed"] or payment_status == "paid")
 
-        if not (is_paid or is_completed_cod):
+        is_delivered = order_status in ["delivered", "completed"]
+
+        if not (is_paid or is_completed_cod or is_delivered):
             continue
 
         # Verify product is in order items
