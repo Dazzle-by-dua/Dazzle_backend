@@ -22,7 +22,8 @@ router = APIRouter(prefix="/api/reviews", tags=["Reviews"])
 async def check_customer_review_eligibility(
     db,
     customer: dict,
-    product_identifier: Any
+    product_identifier: Any,
+    order_id: Optional[str] = None
 ):
     """
     Authoritative backend eligibility verification.
@@ -34,9 +35,13 @@ async def check_customer_review_eligibility(
        - Verifies the product is in the order items.
     Returns: (eligible: bool, reason: str, message: str, product: Optional[dict], existing_review: Optional[dict])
     """
+    import urllib.parse
+
     # 1. Locate Product
     prod = None
     target_str = str(product_identifier).strip() if product_identifier is not None else ""
+    if target_str:
+        target_str = urllib.parse.unquote(target_str).strip()
 
     if isinstance(product_identifier, int) or (isinstance(product_identifier, str) and product_identifier.isdigit()):
         prod = await db.products.find_one({"id": int(product_identifier)})
@@ -53,6 +58,8 @@ async def check_customer_review_eligibility(
             pass
     if not prod and target_str:
         prod = await db.products.find_one({"sku": {"$regex": f"^{re.escape(target_str)}$", "$options": "i"}})
+    if not prod and target_str:
+        prod = await db.products.find_one({"name": {"$regex": re.escape(target_str), "$options": "i"}})
 
     if not prod:
         return False, "product_not_found", "Product not found.", None, None
@@ -60,15 +67,19 @@ async def check_customer_review_eligibility(
     prod_id = prod.get("id")
     prod_name = (prod.get("name") or "").strip()
 
-    # 2. Check for duplicate review by this customer for this product
+    # 2. Check for duplicate / existing review by this customer for this product
     cust_id = str(customer.get("id") or "").strip()
     cust_email = (customer.get("email") or "").strip().lower()
+    cust_name = (customer.get("name") or "").strip()
+    cust_phone = (customer.get("phone") or "").strip()
 
     cust_match = []
     if cust_email:
         cust_match.append({"customer_email": {"$regex": f"^\\s*{re.escape(cust_email)}\\s*$", "$options": "i"}})
     if cust_id:
         cust_match.append({"customer_id": cust_id})
+    if cust_name:
+        cust_match.append({"name": {"$regex": f"^\\s*{re.escape(cust_name)}\\s*$", "$options": "i"}})
 
     prod_match = []
     if prod_id is not None:
@@ -80,6 +91,8 @@ async def check_customer_review_eligibility(
             pass
     if prod_name:
         prod_match.append({"product": {"$regex": f"^{re.escape(prod_name)}$", "$options": "i"}})
+    if target_str:
+        prod_match.append({"product": {"$regex": f"^{re.escape(target_str)}$", "$options": "i"}})
 
     if cust_match and prod_match:
         dup_query = {
@@ -99,6 +112,26 @@ async def check_customer_review_eligibility(
             )
 
     # 3. Check Orders
+    # Direct order lookup if order_id provided
+    if order_id:
+        order = await db.orders.find_one({"id": {"$regex": f"^\\s*{re.escape(order_id.strip())}\\s*$", "$options": "i"}})
+        if order:
+            order_status = str(order.get("status") or order.get("order_status") or order.get("orderStatus") or "").strip().lower()
+            if any(s in order_status for s in ["delivered", "completed"]):
+                items = order.get("items") or order.get("order_items") or order.get("products") or []
+                prod_name_clean = prod_name.lower()
+                for item in items:
+                    item_id = item.get("id") or item.get("productId") or item.get("product_id") or item.get("prod_id")
+                    item_name = str(item.get("name") or item.get("product_name") or item.get("title") or item.get("product") or "").strip().lower()
+
+                    if item_id is not None and prod_id is not None and str(item_id).strip() == str(prod_id).strip():
+                        return True, "eligible", "Customer is eligible to write a review.", prod, None
+                    if prod_name_clean and item_name and (prod_name_clean in item_name or item_name in prod_name_clean):
+                        return True, "eligible", "Customer is eligible to write a review.", prod, None
+
+                if not items:
+                    return True, "eligible", "Customer is eligible to write a review.", prod, None
+
     order_clauses = []
     if cust_email:
         order_clauses.append({"email": {"$regex": f"^\\s*{re.escape(cust_email)}\\s*$", "$options": "i"}})
@@ -108,7 +141,11 @@ async def check_customer_review_eligibility(
         order_clauses.append({"customer_id": cust_id})
         order_clauses.append({"customerId": cust_id})
         order_clauses.append({"user_id": cust_id})
-    cust_phone = (customer.get("phone") or "").strip()
+    if cust_name:
+        order_clauses.append({"customer": {"$regex": f"^\\s*{re.escape(cust_name)}\\s*$", "$options": "i"}})
+        name_parts = [p.strip() for p in cust_name.split() if len(p.strip()) >= 3]
+        for part in name_parts:
+            order_clauses.append({"customer": {"$regex": f"\\b{re.escape(part)}\\b", "$options": "i"}})
     if cust_phone and len(cust_phone) >= 7:
         order_clauses.append({"phone": {"$regex": re.escape(cust_phone), "$options": "i"}})
 
@@ -140,7 +177,8 @@ async def check_customer_review_eligibility(
 
         # Verify product is in order items
         prod_name_clean = prod_name.lower()
-        for item in order.get("items", []):
+        items = order.get("items") or order.get("order_items") or order.get("products") or []
+        for item in items:
             item_id = item.get("id") or item.get("productId") or item.get("product_id") or item.get("prod_id")
             item_name = str(item.get("name") or item.get("product_name") or item.get("title") or item.get("product") or "").strip().lower()
 
@@ -166,6 +204,10 @@ async def check_customer_review_eligibility(
             if id_matched or name_matched or sku_matched:
                 return True, "eligible", "Customer is eligible to write a review.", prod, None
 
+        # If order was marked delivered and has no item breakdown
+        if is_delivered and not items:
+            return True, "eligible", "Customer is eligible to write a review.", prod, None
+
     return False, "not_purchased", "Only customers who have purchased this product can write a review.", prod, None
 
 
@@ -173,6 +215,7 @@ async def check_customer_review_eligibility(
 async def check_review_eligibility_endpoint(
     product_id: Optional[str] = Query(None),
     product: Optional[str] = Query(None),
+    order_id: Optional[str] = Query(None),
     customer: Optional[dict] = Depends(get_current_customer_optional)
 ):
     """
@@ -201,7 +244,8 @@ async def check_review_eligibility_endpoint(
     eligible, reason, message, prod, existing_rev = await check_customer_review_eligibility(
         db=db,
         customer=customer,
-        product_identifier=target
+        product_identifier=target,
+        order_id=order_id
     )
 
     can_edit = bool(existing_rev)
