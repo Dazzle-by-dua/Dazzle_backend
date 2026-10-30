@@ -364,7 +364,8 @@ async def add_review(
     eligible, reason, message, prod, existing_rev = await check_customer_review_eligibility(
         db=db,
         customer=customer,
-        product_identifier=target_identifier
+        product_identifier=target_identifier,
+        order_id=payload.order_id
     )
 
     if not eligible:
