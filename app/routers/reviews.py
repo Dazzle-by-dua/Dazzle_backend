@@ -417,7 +417,7 @@ async def add_review(
         "text": payload.text.strip(),
         "date": formatted_date,
         "verified": True,
-        "approved": False,  # Strict: pending admin moderation
+        "approved": True,
         "product": prod["name"],
         "product_id": prod["id"],
         "customer_id": str(customer.get("id")),
@@ -485,7 +485,7 @@ async def update_review(
         update_data = {
             "date": formatted_date,
             "updated_at": now_iso,
-            "approved": False  # Re-submitted review enters moderation
+            "approved": True
         }
         if payload.rating is not None:
             update_data["rating"] = max(1, min(5, int(payload.rating)))
