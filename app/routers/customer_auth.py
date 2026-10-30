@@ -806,14 +806,21 @@ async def update_profile(payload: CustomerProfileUpdate, current_customer: dict 
 async def get_customer_orders(current_customer: dict = Depends(get_current_customer)):
     """
     Retrieve only the orders placed by the currently authenticated customer.
+    Matches by customer_id, customer_email, or email to cover all order creation paths.
     Guarantees Customer A cannot view Customer B's orders.
     """
     db = get_database()
     email = current_customer["email"].strip().lower()
     escaped_email = re.escape(email)
+    cust_id = str(current_customer.get("id") or "").strip()
 
-    orders = await db.orders.find({
-        "email": {"$regex": f"^{escaped_email}$", "$options": "i"}
-    }).sort("created_at", -1).to_list(length=500)
+    or_clauses = [
+        {"email": {"$regex": f"^{escaped_email}$", "$options": "i"}},
+        {"customer_email": {"$regex": f"^{escaped_email}$", "$options": "i"}},
+    ]
+    if cust_id:
+        or_clauses.append({"customer_id": cust_id})
+
+    orders = await db.orders.find({"$or": or_clauses}).sort("created_at", -1).to_list(length=500)
 
     return clean_docs(orders)

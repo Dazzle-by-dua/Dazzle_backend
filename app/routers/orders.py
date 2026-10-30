@@ -450,7 +450,10 @@ async def get_order_by_id(
     )
 
 @router.post("", response_model=OrderOut, status_code=201)
-async def create_order(payload: OrderCreate):
+async def create_order(
+    payload: OrderCreate,
+    customer: Optional[dict] = Depends(get_current_customer_optional)
+):
     """Standard order creation (Cash on Delivery or direct record)."""
     db = get_database()
     now = datetime.datetime.now()
@@ -513,6 +516,8 @@ async def create_order(payload: OrderCreate):
         "razorpay_payment_id": payload.razorpay_payment_id,
         "currency": payload.currency or "INR",
         "notes": payload.notes,
+        "customer_id": str(customer.get("id")) if customer else None,
+        "customer_email": (customer.get("email") or payload.email or "").strip().lower(),
         "created_at": now_iso,
         "updated_at": now_iso
     }
