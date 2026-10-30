@@ -194,5 +194,5 @@ async def get_current_customer_optional(
 ) -> Optional[dict]:
     try:
         return await get_current_customer(authorization, customer_token)
-    except HTTPException:
+    except Exception:
         return None
