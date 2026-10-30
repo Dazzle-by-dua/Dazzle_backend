@@ -21,8 +21,25 @@
   const API_CONFIG = {
     BASE_URL: API_BASE_URL,
     STORAGE_AUTH_KEY: "dazzle_admin_session",
+    STORAGE_CUSTOMER_KEY: "dazzle_customer_session",
     TIMEOUT_MS: 10000
   };
+
+  /**
+   * Helper to retrieve active JWT token from CustomerAuth or Storage
+   */
+  function getCustomerToken() {
+    try {
+      const sessStr = sessionStorage.getItem(API_CONFIG.STORAGE_CUSTOMER_KEY) || localStorage.getItem(API_CONFIG.STORAGE_CUSTOMER_KEY);
+      if (sessStr) {
+        const sess = JSON.parse(sessStr);
+        return sess.token || null;
+      }
+    } catch (e) {
+      console.warn("Could not read customer auth session:", e);
+    }
+    return null;
+  }
 
   /**
    * Helper to retrieve active JWT token from AdminAuth or Storage
@@ -50,14 +67,24 @@
       ...(options.headers || {})
     };
 
-    const token = getAuthToken();
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
+    const adminToken = getAuthToken();
+    const custToken = getCustomerToken();
+
+    // Attach customer token for customer endpoints, review operations, or storefront user operations
+    if (endpoint.includes("/api/customer/") || endpoint.includes("/api/reviews") || (custToken && !adminToken)) {
+      if (custToken && !headers["Authorization"]) {
+        headers["Authorization"] = `Bearer ${custToken}`;
+      } else if (adminToken && !headers["Authorization"]) {
+        headers["Authorization"] = `Bearer ${adminToken}`;
+      }
+    } else if (adminToken && !headers["Authorization"]) {
+      headers["Authorization"] = `Bearer ${adminToken}`;
     }
 
     const fetchOptions = {
       ...options,
-      headers
+      headers,
+      credentials: "include"
     };
 
     if (options.body && typeof options.body === "object" && !(options.body instanceof FormData)) {
@@ -217,6 +244,9 @@
 
     // Reviews
     reviews: {
+      async checkEligibility(productId) {
+        return await request(`/api/reviews/eligibility?product_id=${encodeURIComponent(productId)}`);
+      },
       async getAll(filters = {}) {
         const params = new URLSearchParams();
         if (filters.approvedOnly) params.append("approved_only", "true");

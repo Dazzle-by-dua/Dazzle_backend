@@ -170,6 +170,8 @@ async def test_review_flow_and_eligibility():
     res_elig_dup = client.get("/api/reviews/eligibility?product_id=1", headers=cust_headers)
     assert res_elig_dup.json()["eligible"] is False
     assert res_elig_dup.json()["reason"] == "already_reviewed"
+    assert res_elig_dup.json().get("can_edit") is True
+    assert res_elig_dup.json()["existing_review"]["id"] == rev_id
 
     res_submit_dup = client.post("/api/reviews", json={
         "product_id": 1,
@@ -178,6 +180,24 @@ async def test_review_flow_and_eligibility():
     }, headers=cust_headers)
     assert res_submit_dup.status_code == 400
     assert "already submitted" in res_submit_dup.json()["detail"].lower()
+
+    # 9b. Customer edits their written review via PUT /api/reviews/{rev_id}
+    res_cust_edit = client.put(f"/api/reviews/{rev_id}", json={
+        "rating": 4,
+        "text": "Updated review text: Absolutely breathtaking craftsmanship!"
+    }, headers=cust_headers)
+    assert res_cust_edit.status_code == 200
+    assert res_cust_edit.json()["rating"] == 4
+    assert res_cust_edit.json()["text"] == "Updated review text: Absolutely breathtaking craftsmanship!"
+    assert res_cust_edit.json()["approved"] is False  # Re-submitted review enters moderation queue
+
+    # 9c. Unauthorized customer cannot edit someone else's review
+    other_headers = create_test_customer_token(customer_id="cust_intruder", email="intruder@example.com", name="Intruder")
+    res_unauth_edit = client.put(f"/api/reviews/{rev_id}", json={
+        "rating": 1,
+        "text": "Unauthorized attempt to edit"
+    }, headers=other_headers)
+    assert res_unauth_edit.status_code == 403
 
     # 10. Storefront GET /api/reviews -> should NOT display pending review to public
     res_pub_reviews = client.get("/api/reviews?product_id=1")

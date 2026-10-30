@@ -97,6 +97,7 @@ class ReviewCreate(BaseModel):
     order_id: Optional[str] = None
 
 class ReviewUpdate(BaseModel):
+    id: Optional[int] = None
     name: Optional[str] = None
     rating: Optional[int] = None
     text: Optional[str] = None
@@ -118,6 +119,7 @@ class ReviewOut(ReviewBase):
 class ReviewEligibilityResponse(BaseModel):
     eligible: bool
     can_review: bool
+    can_edit: bool = False
     reason: str  # "eligible", "login_required", "not_purchased", "already_reviewed", "product_not_found"
     message: str
     customer_name: Optional[str] = None

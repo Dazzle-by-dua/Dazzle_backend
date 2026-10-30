@@ -29,95 +29,141 @@ async def check_customer_review_eligibility(
     1. Validates that the product exists.
     2. Enforces one review per customer per product (checks pending & approved reviews).
     3. Searches customer's order records:
-       - Disqualifies cancelled orders or failed payments.
-       - Requires successful payment (paymentStatus == 'Paid') OR
-         completed Cash on Delivery order (status in ['Delivered', 'Completed']).
+       - Disqualifies cancelled orders.
+       - Qualifies delivered/completed orders, paid orders, or completed Cash on Delivery orders.
        - Verifies the product is in the order items.
     Returns: (eligible: bool, reason: str, message: str, product: Optional[dict], existing_review: Optional[dict])
     """
     # 1. Locate Product
     prod = None
+    target_str = str(product_identifier).strip() if product_identifier is not None else ""
+
     if isinstance(product_identifier, int) or (isinstance(product_identifier, str) and product_identifier.isdigit()):
         prod = await db.products.find_one({"id": int(product_identifier)})
-    if not prod and isinstance(product_identifier, str):
-        prod = await db.products.find_one({"name": {"$regex": f"^{re.escape(product_identifier.strip())}$", "$options": "i"}})
-    if not prod:
-        prod = await db.products.find_one({"id": str(product_identifier)})
+    if not prod and target_str:
+        prod = await db.products.find_one({"name": {"$regex": f"^{re.escape(target_str)}$", "$options": "i"}})
+    if not prod and target_str:
+        prod = await db.products.find_one({"id": target_str})
+    if not prod and target_str:
+        try:
+            from bson import ObjectId
+            if ObjectId.is_valid(target_str):
+                prod = await db.products.find_one({"_id": ObjectId(target_str)})
+        except Exception:
+            pass
+    if not prod and target_str:
+        prod = await db.products.find_one({"sku": {"$regex": f"^{re.escape(target_str)}$", "$options": "i"}})
 
     if not prod:
         return False, "product_not_found", "Product not found.", None, None
 
     prod_id = prod.get("id")
-    prod_name = prod.get("name", "")
+    prod_name = (prod.get("name") or "").strip()
 
     # 2. Check for duplicate review by this customer for this product
-    cust_id = str(customer.get("id") or "")
+    cust_id = str(customer.get("id") or "").strip()
     cust_email = (customer.get("email") or "").strip().lower()
 
-    dup_query = {
-        "$and": [
-            {
-                "$or": [
-                    {"customer_email": {"$regex": f"^{re.escape(cust_email)}$", "$options": "i"}},
-                    {"customer_id": cust_id}
-                ]
-            },
-            {
-                "$or": [
-                    {"product_id": prod_id},
-                    {"product_id": str(prod_id)},
-                    {"product": {"$regex": f"^{re.escape(prod_name)}$", "$options": "i"}}
-                ]
-            }
-        ]
-    }
-    existing_rev = await db.reviews.find_one(dup_query)
-    if existing_rev:
-        return (
-            False,
-            "already_reviewed",
-            "You have already submitted a review for this product. Thank you!",
-            prod,
-            clean_doc(existing_rev)
-        )
+    cust_match = []
+    if cust_email:
+        cust_match.append({"customer_email": {"$regex": f"^\\s*{re.escape(cust_email)}\\s*$", "$options": "i"}})
+    if cust_id:
+        cust_match.append({"customer_id": cust_id})
+
+    prod_match = []
+    if prod_id is not None:
+        prod_match.append({"product_id": prod_id})
+        prod_match.append({"product_id": str(prod_id)})
+        try:
+            prod_match.append({"product_id": int(prod_id)})
+        except (ValueError, TypeError):
+            pass
+    if prod_name:
+        prod_match.append({"product": {"$regex": f"^{re.escape(prod_name)}$", "$options": "i"}})
+
+    if cust_match and prod_match:
+        dup_query = {
+            "$and": [
+                {"$or": cust_match},
+                {"$or": prod_match}
+            ]
+        }
+        existing_rev = await db.reviews.find_one(dup_query)
+        if existing_rev:
+            return (
+                False,
+                "already_reviewed",
+                "You have already submitted a review for this product. You can edit your existing review.",
+                prod,
+                clean_doc(existing_rev)
+            )
 
     # 3. Check Orders
-    order_query = {
-        "$or": [
-            {"email": {"$regex": f"^{re.escape(cust_email)}$", "$options": "i"}},
-            {"customer_id": cust_id}
-        ]
-    }
-    orders = await db.orders.find(order_query).to_list(length=1000)
+    order_clauses = []
+    if cust_email:
+        order_clauses.append({"email": {"$regex": f"^\\s*{re.escape(cust_email)}\\s*$", "$options": "i"}})
+        order_clauses.append({"customer_email": {"$regex": f"^\\s*{re.escape(cust_email)}\\s*$", "$options": "i"}})
+        order_clauses.append({"customerEmail": {"$regex": f"^\\s*{re.escape(cust_email)}\\s*$", "$options": "i"}})
+    if cust_id:
+        order_clauses.append({"customer_id": cust_id})
+        order_clauses.append({"customerId": cust_id})
+        order_clauses.append({"user_id": cust_id})
+    cust_phone = (customer.get("phone") or "").strip()
+    if cust_phone and len(cust_phone) >= 7:
+        order_clauses.append({"phone": {"$regex": re.escape(cust_phone), "$options": "i"}})
+
+    orders = await db.orders.find({"$or": order_clauses} if order_clauses else {}).to_list(length=1000)
 
     for order in orders:
-        order_status = str(order.get("status") or "").strip().lower()
-        payment_status = str(order.get("paymentStatus") or "").strip().lower() if order.get("paymentStatus") else ""
-        payment_method = str(order.get("paymentMethod") or "").strip().lower() if order.get("paymentMethod") else ""
+        order_status = str(order.get("status") or order.get("order_status") or order.get("orderStatus") or "").strip().lower()
+        payment_status = str(order.get("paymentStatus") or order.get("payment_status") or "").strip().lower()
+        payment_method = str(order.get("paymentMethod") or order.get("payment_method") or "").strip().lower()
 
-        # Cancelled or failed orders never qualify
+        # Cancelled orders never qualify
         if order_status in ["cancelled", "canceled"]:
             continue
-        if payment_status == "failed":
+
+        # Delivery & payment verification:
+        # a) Order marked Delivered or Completed qualifies for customer reviews
+        is_delivered = any(s in order_status for s in ["delivered", "completed"])
+
+        # b) Payment status verification
+        if payment_status == "failed" and not is_delivered:
             continue
 
-        # Payment / Completion verification:
-        # a) Verified paid order
-        is_paid = (payment_status == "paid") or (order.get("paymentStatus") is None and order_status in ["delivered", "completed"])
-        # b) Valid completed Cash on Delivery order
+        is_paid = (payment_status == "paid") or (order.get("paymentStatus") is None and is_delivered)
         is_cod = ("cash on delivery" in payment_method or payment_method == "cod")
-        is_completed_cod = is_cod and (order_status in ["delivered", "completed"] or payment_status == "paid")
+        is_completed_cod = is_cod and (is_delivered or payment_status == "paid")
 
-        is_delivered = order_status in ["delivered", "completed"]
-
-        if not (is_paid or is_completed_cod or is_delivered):
+        if not (is_delivered or is_paid or is_completed_cod):
             continue
 
         # Verify product is in order items
+        prod_name_clean = prod_name.lower()
         for item in order.get("items", []):
-            item_id = item.get("id")
-            item_name = item.get("name", "")
-            if (item_id is not None and (str(item_id) == str(prod_id))) or (item_name and item_name.strip().lower() == prod_name.strip().lower()):
+            item_id = item.get("id") or item.get("productId") or item.get("product_id") or item.get("prod_id")
+            item_name = str(item.get("name") or item.get("product_name") or item.get("title") or item.get("product") or "").strip().lower()
+
+            # ID match
+            id_matched = False
+            if item_id is not None and prod_id is not None:
+                if str(item_id).strip() == str(prod_id).strip():
+                    id_matched = True
+
+            # Name match (handles variants appended like 'Minimal Diamond Ring - Size 7')
+            name_matched = False
+            if prod_name_clean and item_name:
+                if prod_name_clean == item_name or prod_name_clean in item_name or item_name in prod_name_clean:
+                    name_matched = True
+
+            # SKU match if available
+            sku_matched = False
+            item_sku = str(item.get("sku") or "").strip().lower()
+            prod_sku = str(prod.get("sku") or "").strip().lower()
+            if item_sku and prod_sku and item_sku == prod_sku:
+                sku_matched = True
+
+            if id_matched or name_matched or sku_matched:
                 return True, "eligible", "Customer is eligible to write a review.", prod, None
 
     return False, "not_purchased", "Only customers who have purchased this product can write a review.", prod, None
@@ -142,6 +188,7 @@ async def check_review_eligibility_endpoint(
         return ReviewEligibilityResponse(
             eligible=False,
             can_review=False,
+            can_edit=False,
             reason="login_required",
             message="Only customers who have purchased this product can write a review. Please sign in to your account.",
             customer_name=None,
@@ -157,9 +204,12 @@ async def check_review_eligibility_endpoint(
         product_identifier=target
     )
 
+    can_edit = bool(existing_rev)
+
     return ReviewEligibilityResponse(
         eligible=eligible,
         can_review=eligible,
+        can_edit=can_edit,
         reason=reason,
         message=message,
         customer_name=customer.get("name"),
@@ -275,9 +325,22 @@ async def add_review(
 
     if not eligible:
         if reason == "already_reviewed":
+            # If customer provided review ID matching their existing review, treat as update
+            if payload.id and existing_rev and payload.id == existing_rev.get("id"):
+                return await update_review(
+                    review_id=payload.id,
+                    payload=ReviewUpdate(
+                        id=payload.id,
+                        rating=payload.rating,
+                        text=payload.text,
+                        name=payload.name
+                    ),
+                    admin=None,
+                    customer=customer
+                )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="You have already submitted a review for this product."
+                detail="You have already submitted a review for this product. You can edit your existing review."
             )
         elif reason == "not_purchased":
             raise HTTPException(
@@ -322,18 +385,135 @@ async def add_review(
 
 
 @router.put("/{review_id}", response_model=ReviewOut)
-async def update_review(review_id: int, payload: ReviewUpdate, admin: dict = Depends(get_current_admin)):
+async def update_review(
+    review_id: int,
+    payload: ReviewUpdate,
+    admin: Optional[dict] = Depends(get_current_admin_optional),
+    customer: Optional[dict] = Depends(get_current_customer_optional)
+):
+    """
+    Update a review.
+    - Admins can update any review directly.
+    - Logged-in customers can edit and update their own submitted reviews for delivered products.
+    """
+    if not admin and not customer:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required to edit a review."
+        )
+
     db = get_database()
     existing = await db.reviews.find_one({"id": review_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Review not found.")
 
+    now = datetime.datetime.now(datetime.timezone.utc)
+    now_iso = now.isoformat()
+    formatted_date = payload.date or now.strftime("%d %b %Y")
+
+    if customer and not admin:
+        cust_email = (customer.get("email") or "").strip().lower()
+        cust_id = str(customer.get("id") or "").strip()
+        cust_name = (customer.get("name") or "").strip().lower()
+
+        rev_email = str(existing.get("customer_email") or "").strip().lower()
+        rev_id = str(existing.get("customer_id") or "").strip()
+        rev_name = str(existing.get("name") or "").strip().lower()
+
+        is_owner = False
+        if rev_email and cust_email and rev_email == cust_email:
+            is_owner = True
+        elif rev_id and cust_id and rev_id == cust_id:
+            is_owner = True
+        elif rev_name and cust_name and rev_name == cust_name:
+            is_owner = True
+        elif not rev_email and not rev_id:
+            if cust_name and rev_name and (cust_name in rev_name or rev_name in cust_name):
+                is_owner = True
+
+        if not is_owner:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only edit your own reviews."
+            )
+
+        update_data = {
+            "date": formatted_date,
+            "updated_at": now_iso,
+            "approved": False  # Re-submitted review enters moderation
+        }
+        if payload.rating is not None:
+            update_data["rating"] = max(1, min(5, int(payload.rating)))
+        if payload.text is not None:
+            if not payload.text.strip():
+                raise HTTPException(status_code=400, detail="Review text cannot be empty.")
+            update_data["text"] = payload.text.strip()
+        if payload.name:
+            update_data["name"] = payload.name.strip()
+
+        if not existing.get("customer_email") and customer.get("email"):
+            update_data["customer_email"] = customer.get("email")
+        if not existing.get("customer_id") and customer.get("id"):
+            update_data["customer_id"] = str(customer.get("id"))
+
+        await db.reviews.update_one({"id": review_id}, {"$set": update_data})
+        updated = await db.reviews.find_one({"id": review_id})
+        return clean_doc(updated)
+
+    # Admin update
     update_data = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    update_data["updated_at"] = now_iso
     if update_data:
         await db.reviews.update_one({"id": review_id}, {"$set": update_data})
 
     updated = await db.reviews.find_one({"id": review_id})
     return clean_doc(updated)
+
+
+@router.put("", response_model=ReviewOut)
+async def update_review_by_product(
+    payload: ReviewUpdate,
+    admin: Optional[dict] = Depends(get_current_admin_optional),
+    customer: Optional[dict] = Depends(get_current_customer_optional)
+):
+    """
+    Allow customers or admins to update a review directly by specifying the review ID
+    or product ID in the request body.
+    """
+    if not admin and not customer:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required to edit a review."
+        )
+
+    db = get_database()
+    review = None
+    if payload.id:
+        review = await db.reviews.find_one({"id": payload.id})
+
+    if not review and customer:
+        cust_email = (customer.get("email") or "").strip().lower()
+        target_prod = payload.product_id if payload.product_id is not None else payload.product
+        if target_prod:
+            prod_query = [{"product_id": target_prod}, {"product_id": str(target_prod)}]
+            try:
+                prod_query.append({"product_id": int(target_prod)})
+            except (ValueError, TypeError):
+                pass
+            if payload.product:
+                prod_query.append({"product": {"$regex": f"^{re.escape(str(payload.product).strip())}$", "$options": "i"}})
+
+            review = await db.reviews.find_one({
+                "$and": [
+                    {"customer_email": {"$regex": f"^\\s*{re.escape(cust_email)}\\s*$", "$options": "i"}},
+                    {"$or": prod_query}
+                ]
+            })
+
+    if not review:
+        raise HTTPException(status_code=404, detail="Review to update was not found.")
+
+    return await update_review(review_id=review["id"], payload=payload, admin=admin, customer=customer)
 
 
 @router.patch("/{review_id}/status", response_model=ReviewOut)

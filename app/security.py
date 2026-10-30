@@ -141,8 +141,11 @@ async def get_current_customer(
     )
 
     token = None
-    if authorization and authorization.lower().startswith("bearer "):
-        token = authorization[7:].strip()
+    if authorization:
+        if authorization.lower().startswith("bearer "):
+            token = authorization[7:].strip()
+        else:
+            token = authorization.strip()
     elif customer_token:
         token = customer_token
 
