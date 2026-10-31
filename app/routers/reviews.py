@@ -112,101 +112,118 @@ async def check_customer_review_eligibility(
             )
 
     # 3. Check Orders
+    def is_order_owned_by_customer(o: dict) -> bool:
+        if not o:
+            return False
+        # Database customer ID match (strongest association)
+        order_cust_id = str(o.get("customer_id") or o.get("customerId") or o.get("user_id") or "").strip()
+        if cust_id and order_cust_id and order_cust_id == cust_id:
+            return True
+
+        # Customer email match
+        order_cust_email = str(o.get("customer_email") or o.get("customerEmail") or "").strip().lower()
+        if cust_email and order_cust_email and order_cust_email == cust_email:
+            return True
+
+        # Order email match (for orders placed with customer's email)
+        order_email = str(o.get("email") or "").strip().lower()
+        if cust_email and order_email and order_email == cust_email:
+            # If order was claimed by another customer_id, deny
+            if order_cust_id and cust_id and order_cust_id != cust_id:
+                return False
+            # Do not allow unauthenticated guest orders of someone else
+            if o.get("is_guest") is True:
+                return False
+            return True
+
+        return False
+
+    def order_contains_product(o: dict) -> bool:
+        items = o.get("items") or o.get("order_items") or o.get("products") or []
+        prod_id_str = str(prod_id).strip() if prod_id is not None else ""
+        prod_name_clean = prod_name.strip().lower() if prod_name else ""
+        target_clean = target_str.strip().lower() if target_str else ""
+
+        for item in items:
+            item_id = item.get("id") or item.get("productId") or item.get("product_id") or item.get("prod_id")
+            item_id_str = str(item_id).strip() if item_id is not None else ""
+            item_name = str(item.get("name") or item.get("product_name") or item.get("title") or item.get("product") or "").strip().lower()
+
+            # Exact product ID match
+            if prod_id_str and item_id_str and prod_id_str == item_id_str:
+                return True
+            if target_clean and item_id_str and target_clean == item_id_str:
+                return True
+
+            # Product name match
+            if prod_name_clean and item_name:
+                if prod_name_clean == item_name or prod_name_clean in item_name or item_name in prod_name_clean:
+                    return True
+            if target_clean and item_name:
+                if target_clean == item_name or target_clean in item_name or item_name in target_clean:
+                    return True
+
+        return False
+
+    def is_order_eligible_for_review(o: dict) -> bool:
+        order_status = str(o.get("status") or o.get("order_status") or o.get("orderStatus") or "").strip().lower()
+        payment_status = str(o.get("paymentStatus") or o.get("payment_status") or "").strip().lower()
+        payment_method = str(o.get("paymentMethod") or o.get("payment_method") or "").strip().lower()
+
+        # Cancelled orders never qualify
+        if order_status in ["cancelled", "canceled"]:
+            return False
+
+        # Order status MUST be Delivered
+        is_delivered = (order_status == "delivered" or "delivered" in order_status)
+        if not is_delivered:
+            return False
+
+        # Determine COD vs Razorpay / Online
+        is_cod = ("cash on delivery" in payment_method or payment_method == "cod" or "cash_on_delivery" in payment_method)
+
+        if is_cod:
+            # COD Delivered: Allow review even if payment status is Pending
+            return True
+        else:
+            # Razorpay / Online: Payment must be successfully verified ('paid')
+            return payment_status == "paid"
+
+    orders_to_check = []
     # Direct order lookup if order_id provided
     if order_id:
-        order = await db.orders.find_one({"id": {"$regex": f"^\\s*{re.escape(order_id.strip())}\\s*$", "$options": "i"}})
-        if order:
-            order_status = str(order.get("status") or order.get("order_status") or order.get("orderStatus") or "").strip().lower()
-            if any(s in order_status for s in ["delivered", "completed"]):
-                items = order.get("items") or order.get("order_items") or order.get("products") or []
-                prod_name_clean = prod_name.lower()
-                for item in items:
-                    item_id = item.get("id") or item.get("productId") or item.get("product_id") or item.get("prod_id")
-                    item_name = str(item.get("name") or item.get("product_name") or item.get("title") or item.get("product") or "").strip().lower()
-
-                    if item_id is not None and prod_id is not None and str(item_id).strip() == str(prod_id).strip():
-                        return True, "eligible", "Customer is eligible to write a review.", prod, None
-                    if prod_name_clean and item_name and (prod_name_clean in item_name or item_name in prod_name_clean):
-                        return True, "eligible", "Customer is eligible to write a review.", prod, None
-
-                if not items:
-                    return True, "eligible", "Customer is eligible to write a review.", prod, None
+        clean_order_id = str(order_id).strip()
+        single_order = await db.orders.find_one({"id": {"$regex": f"^\\s*{re.escape(clean_order_id)}\\s*$", "$options": "i"}})
+        if single_order and is_order_owned_by_customer(single_order):
+            orders_to_check.append(single_order)
 
     order_clauses = []
-    if cust_email:
-        order_clauses.append({"email": {"$regex": f"^\\s*{re.escape(cust_email)}\\s*$", "$options": "i"}})
-        order_clauses.append({"customer_email": {"$regex": f"^\\s*{re.escape(cust_email)}\\s*$", "$options": "i"}})
-        order_clauses.append({"customerEmail": {"$regex": f"^\\s*{re.escape(cust_email)}\\s*$", "$options": "i"}})
     if cust_id:
         order_clauses.append({"customer_id": cust_id})
         order_clauses.append({"customerId": cust_id})
         order_clauses.append({"user_id": cust_id})
+    if cust_email:
+        escaped_email = re.escape(cust_email)
+        order_clauses.append({"customer_email": {"$regex": f"^\\s*{escaped_email}\\s*$", "$options": "i"}})
+        order_clauses.append({"customerEmail": {"$regex": f"^\\s*{escaped_email}\\s*$", "$options": "i"}})
+        order_clauses.append({
+            "email": {"$regex": f"^\\s*{escaped_email}\\s*$", "$options": "i"},
+            "is_guest": {"$ne": True}
+        })
     if cust_name:
         order_clauses.append({"customer": {"$regex": f"^\\s*{re.escape(cust_name)}\\s*$", "$options": "i"}})
-        name_parts = [p.strip() for p in cust_name.split() if len(p.strip()) >= 3]
-        for part in name_parts:
-            order_clauses.append({"customer": {"$regex": f"\\b{re.escape(part)}\\b", "$options": "i"}})
-    if cust_phone and len(cust_phone) >= 7:
-        order_clauses.append({"phone": {"$regex": re.escape(cust_phone), "$options": "i"}})
 
-    orders = await db.orders.find({"$or": order_clauses} if order_clauses else {}).to_list(length=1000)
+    if order_clauses:
+        found_orders = await db.orders.find({"$or": order_clauses}).sort("created_at", -1).to_list(length=500)
+        for fo in found_orders:
+            if not any(o.get("id") == fo.get("id") for o in orders_to_check):
+                if is_order_owned_by_customer(fo):
+                    orders_to_check.append(fo)
 
-    for order in orders:
-        order_status = str(order.get("status") or order.get("order_status") or order.get("orderStatus") or "").strip().lower()
-        payment_status = str(order.get("paymentStatus") or order.get("payment_status") or "").strip().lower()
-        payment_method = str(order.get("paymentMethod") or order.get("payment_method") or "").strip().lower()
-
-        # Cancelled orders never qualify
-        if order_status in ["cancelled", "canceled"]:
-            continue
-
-        # Delivery & payment verification:
-        # a) Order marked Delivered or Completed qualifies for customer reviews
-        is_delivered = any(s in order_status for s in ["delivered", "completed"])
-
-        # b) Payment status verification
-        if payment_status == "failed" and not is_delivered:
-            continue
-
-        is_paid = (payment_status == "paid") or (order.get("paymentStatus") is None and is_delivered)
-        is_cod = ("cash on delivery" in payment_method or payment_method == "cod")
-        is_completed_cod = is_cod and (is_delivered or payment_status == "paid")
-
-        if not (is_delivered or is_paid or is_completed_cod):
-            continue
-
-        # Verify product is in order items
-        prod_name_clean = prod_name.lower()
-        items = order.get("items") or order.get("order_items") or order.get("products") or []
-        for item in items:
-            item_id = item.get("id") or item.get("productId") or item.get("product_id") or item.get("prod_id")
-            item_name = str(item.get("name") or item.get("product_name") or item.get("title") or item.get("product") or "").strip().lower()
-
-            # ID match
-            id_matched = False
-            if item_id is not None and prod_id is not None:
-                if str(item_id).strip() == str(prod_id).strip():
-                    id_matched = True
-
-            # Name match (handles variants appended like 'Minimal Diamond Ring - Size 7')
-            name_matched = False
-            if prod_name_clean and item_name:
-                if prod_name_clean == item_name or prod_name_clean in item_name or item_name in prod_name_clean:
-                    name_matched = True
-
-            # SKU match if available
-            sku_matched = False
-            item_sku = str(item.get("sku") or "").strip().lower()
-            prod_sku = str(prod.get("sku") or "").strip().lower()
-            if item_sku and prod_sku and item_sku == prod_sku:
-                sku_matched = True
-
-            if id_matched or name_matched or sku_matched:
+    for order in orders_to_check:
+        if is_order_eligible_for_review(order):
+            if order_contains_product(order):
                 return True, "eligible", "Customer is eligible to write a review.", prod, None
-
-        # If order was marked delivered and has no item breakdown
-        if is_delivered and not items:
-            return True, "eligible", "Customer is eligible to write a review.", prod, None
 
     return False, "not_purchased", "Only customers who have purchased this product can write a review.", prod, None
 

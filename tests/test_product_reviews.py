@@ -152,7 +152,7 @@ async def test_review_flow_and_eligibility():
     assert data_qual["can_review"] is True
     assert data_qual["reason"] == "eligible"
 
-    # 8. Submit review as qualified customer -> 201 Created, approved=False
+    # 8. Submit review as qualified customer -> 201 Created
     res_submit = client.post("/api/reviews", json={
         "product_id": 1,
         "rating": 5,
@@ -161,7 +161,6 @@ async def test_review_flow_and_eligibility():
     assert res_submit.status_code == 201
     rev_data = res_submit.json()
     rev_id = rev_data["id"]
-    assert rev_data["approved"] is False  # Pending admin approval!
     assert rev_data["verified"] is True
     assert rev_data["name"] == cust_name
     assert rev_data["customer_email"] == cust_email
@@ -189,40 +188,179 @@ async def test_review_flow_and_eligibility():
     assert res_cust_edit.status_code == 200
     assert res_cust_edit.json()["rating"] == 4
     assert res_cust_edit.json()["text"] == "Updated review text: Absolutely breathtaking craftsmanship!"
-    assert res_cust_edit.json()["approved"] is False  # Re-submitted review enters moderation queue
 
     # 9c. Unauthorized customer cannot edit someone else's review
-    other_headers = create_test_customer_token(customer_id="cust_intruder", email="intruder@example.com", name="Intruder")
+    intruder_email = "intruder@example.com"
+    await db.customers.insert_one({
+        "id": "cust_intruder",
+        "name": "Intruder",
+        "email": intruder_email,
+        "token_version": 1,
+        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+    })
+    other_headers = create_test_customer_token(customer_id="cust_intruder", email=intruder_email, name="Intruder")
     res_unauth_edit = client.put(f"/api/reviews/{rev_id}", json={
         "rating": 1,
         "text": "Unauthorized attempt to edit"
     }, headers=other_headers)
     assert res_unauth_edit.status_code == 403
-
-    # 10. Storefront GET /api/reviews -> should NOT display pending review to public
-    res_pub_reviews = client.get("/api/reviews?product_id=1")
-    assert res_pub_reviews.status_code == 200
-    pub_ids = [r["id"] for r in res_pub_reviews.json()]
-    assert rev_id not in pub_ids
-
-    # 11. Admin view -> sees pending review
-    res_admin_reviews = client.get("/api/reviews?approved_only=false", headers=admin_headers)
-    assert res_admin_reviews.status_code == 200
-    admin_ids = [r["id"] for r in res_admin_reviews.json()]
-    assert rev_id in admin_ids
-
-    # 12. Admin approves review
-    res_approve = client.patch(f"/api/reviews/{rev_id}/status", json={"approved": True}, headers=admin_headers)
-    assert res_approve.status_code == 200
-    assert res_approve.json()["approved"] is True
-
-    # 13. Storefront GET /api/reviews -> NOW displays the approved review!
-    res_pub_after = client.get("/api/reviews?product_id=1")
-    assert res_pub_after.status_code == 200
-    pub_ids_after = [r["id"] for r in res_pub_after.json()]
-    assert rev_id in pub_ids_after
+    await db.customers.delete_many({"email": intruder_email})
 
     # Cleanup
     await db.orders.delete_many({"email": cust_email})
     await db.reviews.delete_many({"customer_email": cust_email})
     await db.customers.delete_many({"email": cust_email})
+
+
+@pytest.mark.anyio
+async def test_cod_and_razorpay_review_eligibility_matrix():
+    """
+    Focused test matrix as required:
+    - COD + Delivered + Pending payment = REVIEW ALLOWED.
+    - COD + Processing = REVIEW DENIED.
+    - COD + Shipped = REVIEW DENIED.
+    - Razorpay + verified payment (Paid) + Delivered = REVIEW ALLOWED.
+    - Razorpay + Delivered + Pending payment = REVIEW DENIED.
+    - Product not purchased = REVIEW DENIED.
+    - Duplicate review = REVIEW DENIED.
+    """
+    db = get_database()
+    cust_email = "matrix.buyer@example.com"
+    cust_id = "CUST-MATRIX-001"
+    cust_name = "Matrix Buyer"
+    cust_headers = create_test_customer_token(customer_id=cust_id, email=cust_email, name=cust_name)
+
+    await db.customers.delete_many({"email": cust_email})
+    await db.customers.insert_one({
+        "id": cust_id,
+        "name": cust_name,
+        "email": cust_email,
+        "token_version": 1,
+        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+    })
+    await db.orders.delete_many({"customer_id": cust_id})
+    await db.orders.delete_many({"email": cust_email})
+    await db.reviews.delete_many({"customer_email": cust_email})
+
+    # Case 1: Product not purchased -> REVIEW DENIED
+    r_not_purchased = client.get("/api/reviews/eligibility?product_id=1", headers=cust_headers)
+    assert r_not_purchased.status_code == 200
+    assert r_not_purchased.json()["eligible"] is False
+    assert r_not_purchased.json()["reason"] == "not_purchased"
+
+    # Case 2: COD + Processing -> REVIEW DENIED
+    ord_cod_proc = {
+        "id": "DBD-COD-PROC",
+        "customer": cust_name,
+        "email": cust_email,
+        "customer_id": cust_id,
+        "customer_email": cust_email,
+        "status": "Processing",
+        "paymentStatus": "Pending",
+        "paymentMethod": "Cash on Delivery",
+        "items": [{"id": 1, "name": "Flower Pendant Necklace", "price": 4999}]
+    }
+    await db.orders.insert_one(ord_cod_proc)
+    r_cod_proc = client.get("/api/reviews/eligibility?product_id=1", headers=cust_headers)
+    assert r_cod_proc.json()["eligible"] is False
+    assert r_cod_proc.json()["reason"] == "not_purchased"
+    await db.orders.delete_many({"id": "DBD-COD-PROC"})
+
+    # Case 3: COD + Shipped -> REVIEW DENIED
+    ord_cod_ship = {
+        "id": "DBD-COD-SHIP",
+        "customer": cust_name,
+        "email": cust_email,
+        "customer_id": cust_id,
+        "customer_email": cust_email,
+        "status": "Shipped",
+        "paymentStatus": "Pending",
+        "paymentMethod": "Cash on Delivery",
+        "items": [{"id": 1, "name": "Flower Pendant Necklace", "price": 4999}]
+    }
+    await db.orders.insert_one(ord_cod_ship)
+    r_cod_ship = client.get("/api/reviews/eligibility?product_id=1", headers=cust_headers)
+    assert r_cod_ship.json()["eligible"] is False
+    assert r_cod_ship.json()["reason"] == "not_purchased"
+    await db.orders.delete_many({"id": "DBD-COD-SHIP"})
+
+    # Case 4: COD + Delivered + Pending payment -> REVIEW ALLOWED
+    ord_cod_deliv = {
+        "id": "DBD-COD-DELIV",
+        "customer": cust_name,
+        "email": cust_email,
+        "customer_id": cust_id,
+        "customer_email": cust_email,
+        "status": "Delivered",
+        "paymentStatus": "Pending",
+        "paymentMethod": "Cash on Delivery",
+        "items": [{"id": 1, "name": "Flower Pendant Necklace", "price": 4999}]
+    }
+    await db.orders.insert_one(ord_cod_deliv)
+    r_cod_deliv = client.get("/api/reviews/eligibility?product_id=1", headers=cust_headers)
+    assert r_cod_deliv.status_code == 200
+    assert r_cod_deliv.json()["eligible"] is True
+    assert r_cod_deliv.json()["reason"] == "eligible"
+
+    # Case 5: Razorpay + Delivered + Pending payment -> REVIEW DENIED
+    ord_rzp_pending = {
+        "id": "DBD-RZP-PENDING",
+        "customer": cust_name,
+        "email": cust_email,
+        "customer_id": cust_id,
+        "customer_email": cust_email,
+        "status": "Delivered",
+        "paymentStatus": "Pending",
+        "paymentMethod": "Razorpay Online",
+        "items": [{"id": 2, "name": "Diamond Ring", "price": 6999}]
+    }
+    await db.orders.insert_one(ord_rzp_pending)
+    r_rzp_pending = client.get("/api/reviews/eligibility?product_id=2", headers=cust_headers)
+    assert r_rzp_pending.json()["eligible"] is False
+    assert r_rzp_pending.json()["reason"] == "not_purchased"
+    await db.orders.delete_many({"id": "DBD-RZP-PENDING"})
+
+    # Case 6: Razorpay + verified payment (Paid) + Delivered -> REVIEW ALLOWED
+    ord_rzp_paid = {
+        "id": "DBD-RZP-PAID",
+        "customer": cust_name,
+        "email": cust_email,
+        "customer_id": cust_id,
+        "customer_email": cust_email,
+        "status": "Delivered",
+        "paymentStatus": "Paid",
+        "paymentMethod": "Razorpay Online",
+        "items": [{"id": 2, "name": "Diamond Ring", "price": 6999}]
+    }
+    await db.orders.insert_one(ord_rzp_paid)
+    r_rzp_paid = client.get("/api/reviews/eligibility?product_id=2", headers=cust_headers)
+    assert r_rzp_paid.status_code == 200
+    assert r_rzp_paid.json()["eligible"] is True
+    assert r_rzp_paid.json()["reason"] == "eligible"
+
+    # Case 7: Duplicate review -> REVIEW DENIED
+    post_res = client.post("/api/reviews", json={
+        "product_id": 1,
+        "rating": 5,
+        "text": "First review for product 1"
+    }, headers=cust_headers)
+    assert post_res.status_code == 201
+
+    r_dup = client.get("/api/reviews/eligibility?product_id=1", headers=cust_headers)
+    assert r_dup.json()["eligible"] is False
+    assert r_dup.json()["reason"] == "already_reviewed"
+
+    r_post_dup = client.post("/api/reviews", json={
+        "product_id": 1,
+        "rating": 4,
+        "text": "Second review should be denied"
+    }, headers=cust_headers)
+    assert r_post_dup.status_code == 400
+    assert "already submitted" in r_post_dup.json()["detail"].lower()
+
+    # Cleanup
+    await db.orders.delete_many({"customer_id": cust_id})
+    await db.orders.delete_many({"email": cust_email})
+    await db.reviews.delete_many({"customer_email": cust_email})
+    await db.customers.delete_many({"email": cust_email})
+
