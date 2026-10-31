@@ -806,7 +806,8 @@ async def update_profile(payload: CustomerProfileUpdate, current_customer: dict 
 async def get_customer_orders(current_customer: dict = Depends(get_current_customer)):
     """
     Retrieve only the orders placed by the currently authenticated customer.
-    Matches by customer_id, customer_email, or email to cover all order creation paths.
+    Matches by customer_id or customer_email.
+    Excludes guest orders (is_guest == True) even if the email matches.
     Guarantees Customer A cannot view Customer B's orders.
     """
     db = get_database()
@@ -815,12 +816,30 @@ async def get_customer_orders(current_customer: dict = Depends(get_current_custo
     cust_id = str(current_customer.get("id") or "").strip()
 
     or_clauses = [
-        {"email": {"$regex": f"^{escaped_email}$", "$options": "i"}},
         {"customer_email": {"$regex": f"^{escaped_email}$", "$options": "i"}},
     ]
     if cust_id:
         or_clauses.append({"customer_id": cust_id})
 
-    orders = await db.orders.find({"$or": or_clauses}).sort("created_at", -1).to_list(length=500)
+    # For backward-compatibility with historical orders before customer_email was saved:
+    # Match on email ONLY if is_guest is not True and customer_id is not another user's ID
+    or_clauses.append({
+        "email": {"$regex": f"^{escaped_email}$", "$options": "i"},
+        "is_guest": {"$ne": True},
+        "$or": [
+            {"customer_id": {"$exists": False}},
+            {"customer_id": None},
+            {"customer_id": cust_id}
+        ]
+    })
+
+    query = {
+        "$and": [
+            {"$or": or_clauses},
+            {"is_guest": {"$ne": True}}
+        ]
+    }
+
+    orders = await db.orders.find(query).sort("created_at", -1).to_list(length=500)
 
     return clean_docs(orders)

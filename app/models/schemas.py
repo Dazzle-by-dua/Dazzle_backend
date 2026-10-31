@@ -282,6 +282,11 @@ class OrderOut(BaseModel):
     currency: Optional[str] = "INR"
     paid_at: Optional[str] = None
     notes: Optional[str] = None
+    # Customer linkage fields — required for My Orders queries
+    customer_id: Optional[str] = None
+    customer_email: Optional[str] = None
+    is_guest: Optional[bool] = None
+    created_at: Optional[str] = None
 
 class RazorpayOrderCreateRequest(BaseModel):
     items: List[OrderItem]

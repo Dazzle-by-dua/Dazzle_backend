@@ -21,6 +21,7 @@ from app.delivery_rules import calculate_delivery_charge
 from app.security import (
     get_current_admin,
     get_current_admin_optional,
+    get_current_customer,
     get_current_customer_optional
 )
 from app.razorpay_service import (
@@ -93,7 +94,7 @@ async def calculate_trusted_order_total(
             # Fall back to cart item price & name so checkout never fails for custom or archived items
             trusted_price = float(item_dict.get("price", 0.0))
             if trusted_price <= 0:
-                raise HTTPException(status_code=400, detail=f"Product with ID '{pid}' has invalid price.")
+                raise HTTPException(status_code=400, detail=f"Product with ID '{pid}' does not exist.")
             item_name = item_dict.get("name", "Jewellery Item")
             item_img = item_dict.get("img", "")
 
@@ -152,10 +153,15 @@ async def get_razorpay_public_config():
     return get_razorpay_status()
 
 @router.post("/razorpay/create-order")
-async def create_razorpay_order_endpoint(payload: RazorpayOrderCreateRequest):
+async def create_razorpay_order_endpoint(
+    payload: RazorpayOrderCreateRequest,
+    customer: Optional[dict] = Depends(get_current_customer_optional)
+):
     """
     Create a Razorpay order with trusted backend pricing calculation.
     Drafts an order in MongoDB with status 'Payment Pending'.
+    Associates the order with the authenticated customer's permanent ID so it
+    appears in their My Orders section immediately after payment confirmation.
     """
     if not payload.items or len(payload.items) == 0:
         raise HTTPException(status_code=400, detail="Cart is empty. Cannot create order.")
@@ -194,6 +200,12 @@ async def create_razorpay_order_endpoint(payload: RazorpayOrderCreateRequest):
 
     formatted_date = now.strftime("%d %b %Y")
 
+    # Derive customer identity from the verified JWT — never trust client-supplied IDs.
+    # Distinguish authenticated customer orders from unauthenticated guest checkouts.
+    is_guest = not bool(customer)
+    auth_customer_id = str(customer.get("id") or "").strip() if customer else None
+    auth_customer_email = (customer.get("email") or "").strip().lower() if customer else None
+
     doc = {
         "id": order_id,
         "customer": payload.customer,
@@ -218,6 +230,10 @@ async def create_razorpay_order_endpoint(payload: RazorpayOrderCreateRequest):
         "razorpay_order_id": rzp_res["razorpay_order_id"],
         "currency": "INR",
         "notes": payload.notes,
+        "is_guest": is_guest,
+        # These two fields are what GET /api/customer/orders queries against.
+        "customer_id": auth_customer_id,
+        "customer_email": auth_customer_email,
         "created_at": now_iso,
         "updated_at": now_iso
     }
@@ -307,21 +323,27 @@ async def verify_razorpay_payment_endpoint(payload: RazorpayPaymentVerifyRequest
             raise HTTPException(status_code=400, detail="Payment currency mismatch.")
 
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    # Build the $set payload — also backfill customer_id/customer_email if missing
+    # on this order (e.g., orders created before this fix was deployed).
+    set_fields = {
+        "status": "Processing",
+        "paymentStatus": "Paid",
+        "paymentMethod": payment_method_label,
+        "razorpay_order_id": payload.razorpay_order_id,
+        "razorpay_payment_id": payload.razorpay_payment_id,
+        "razorpay_signature": payload.razorpay_signature,
+        "paymentDetails": pay_details,
+        "paid_at": now_iso,
+        "updated_at": now_iso
+    }
+    # Backfill missing customer linkage fields so pre-fix orders become visible too (only for non-guest orders)
+    if not order.get("customer_email") and order.get("email") and not order.get("is_guest"):
+        set_fields["customer_email"] = order["email"].strip().lower()
+
     await db.orders.update_one(
         {"id": order["id"]},
-        {
-            "$set": {
-                "status": "Processing",
-                "paymentStatus": "Paid",
-                "paymentMethod": payment_method_label,
-                "razorpay_order_id": payload.razorpay_order_id,
-                "razorpay_payment_id": payload.razorpay_payment_id,
-                "razorpay_signature": payload.razorpay_signature,
-                "paymentDetails": pay_details,
-                "paid_at": now_iso,
-                "updated_at": now_iso
-            }
-        }
+        {"$set": set_fields}
     )
 
     updated_order = await db.orders.find_one({"id": order["id"]})
@@ -527,8 +549,9 @@ async def create_order(
         "razorpay_payment_id": payload.razorpay_payment_id,
         "currency": payload.currency or "INR",
         "notes": payload.notes,
+        "is_guest": not bool(customer),
         "customer_id": str(customer.get("id")) if customer else None,
-        "customer_email": ((customer.get("email") if customer else None) or payload.email or "").strip().lower(),
+        "customer_email": customer.get("email").strip().lower() if (customer and customer.get("email")) else None,
         "created_at": now_iso,
         "updated_at": now_iso
     }

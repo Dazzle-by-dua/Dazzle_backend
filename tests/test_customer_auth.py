@@ -432,6 +432,26 @@ async def test_customer_order_isolation():
     assert len(orders_a) == 1
     assert orders_a[0]["id"] == "DBD-2026-7001"
 
+    # 1b. Guest order with Alice's email: must NEVER appear in Alice's registered account
+    await db.orders.insert_one({
+        "id": "DBD-2026-GUEST-01",
+        "customer": "Guest User",
+        "email": email_a,
+        "total": 1200.0,
+        "date": "26 Oct 2026",
+        "status": "Processing",
+        "paymentMethod": "Cash on Delivery",
+        "is_guest": True,
+        "customer_id": None,
+        "customer_email": None,
+        "created_at": now_iso
+    })
+    res_a_orders_after_guest = client.get("/api/customer/orders", headers={"Authorization": f"Bearer {token_a}"})
+    assert res_a_orders_after_guest.status_code == 200
+    order_ids_alice = [o["id"] for o in res_a_orders_after_guest.json()]
+    assert "DBD-2026-GUEST-01" not in order_ids_alice
+    assert "DBD-2026-7001" in order_ids_alice
+
     # 2. Alice tries to view Bob's order directly -> 403 Forbidden
     res_forbidden = client.get("/api/orders/DBD-2026-7002", headers={"Authorization": f"Bearer {token_a}"})
     assert res_forbidden.status_code == 403

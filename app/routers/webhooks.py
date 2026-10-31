@@ -90,19 +90,22 @@ async def handle_razorpay_webhook(
             else:
                 method = payment_entity.get("method")
                 pay_method_label = f"Razorpay ({method.upper()})" if method else "Razorpay Online"
+                # Backfill customer_email from email field if not already set,
+                # so the order appears in the customer's My Orders section.
+                webhook_set = {
+                    "status": "Processing",
+                    "paymentStatus": "Paid",
+                    "paymentMethod": pay_method_label,
+                    "razorpay_payment_id": rzp_payment_id or order.get("razorpay_payment_id"),
+                    "razorpay_order_id": rzp_order_id or order.get("razorpay_order_id"),
+                    "paid_at": now_iso,
+                    "updated_at": now_iso
+                }
+                if not order.get("customer_email") and order.get("email") and not order.get("is_guest"):
+                    webhook_set["customer_email"] = order["email"].strip().lower()
                 await db.orders.update_one(
                     {"id": order["id"]},
-                    {
-                        "$set": {
-                            "status": "Processing",
-                            "paymentStatus": "Paid",
-                            "paymentMethod": pay_method_label,
-                            "razorpay_payment_id": rzp_payment_id or order.get("razorpay_payment_id"),
-                            "razorpay_order_id": rzp_order_id or order.get("razorpay_order_id"),
-                            "paid_at": now_iso,
-                            "updated_at": now_iso
-                        }
-                    }
+                    {"$set": webhook_set}
                 )
                 logger.info(f"Order {order['id']} successfully updated to Paid & Processing via webhook {event_name}.")
                 updated_order = await db.orders.find_one({"id": order["id"]})

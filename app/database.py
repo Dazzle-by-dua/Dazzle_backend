@@ -94,6 +94,7 @@ class DatabaseManager:
             try:
                 await self._create_indexes()
                 await self._seed_defaults_if_needed()
+                await self._backfill_order_customer_email()
                 await self.sync_category_counts()
             except Exception as e:
                 logger.warning(f"Initial index/seed skipped: {_sanitize_error(e)}")
@@ -182,6 +183,10 @@ class DatabaseManager:
             await self.db.orders.create_index("id", unique=True)
             await self.db.orders.create_index("razorpay_order_id")
             await self.db.orders.create_index("razorpay_payment_id")
+            # Indexes for customer order listing queries (GET /api/customer/orders)
+            await self.db.orders.create_index([("customer_email", 1), ("created_at", -1)])
+            await self.db.orders.create_index([("customer_id", 1), ("created_at", -1)])
+            await self.db.orders.create_index([("email", 1), ("created_at", -1)])
             await self.db.processed_webhooks.create_index("event_id", unique=True)
             await self.db.reviews.create_index("id", unique=True)
             await self.db.coupons.create_index("code", unique=True)
@@ -381,6 +386,32 @@ class DatabaseManager:
                     "mime_type": "image/jpeg",
                     "created_at": now_iso
                 })
+
+    async def _backfill_order_customer_email(self):
+        """
+        One-time migration: for any orders that have an 'email' field but are
+        missing 'customer_email', copy email -> customer_email so they appear
+        in the customer's My Orders list.
+        This is safe to run repeatedly — it only touches documents that need fixing.
+        """
+        try:
+            result = await self.db.orders.update_many(
+                {
+                    "email": {"$exists": True, "$ne": "", "$ne": None},
+                    "$or": [
+                        {"customer_email": {"$exists": False}},
+                        {"customer_email": ""},
+                        {"customer_email": None}
+                    ]
+                },
+                [
+                    {"$set": {"customer_email": {"$toLower": {"$trim": {"input": "$email"}}}}}
+                ]
+            )
+            if result.modified_count:
+                logger.info(f"Backfilled customer_email on {result.modified_count} existing orders.")
+        except Exception as e:
+            logger.warning(f"Order customer_email backfill notice: {e}")
 
     async def sync_category_counts(self):
         """Recalculates product count for each category"""

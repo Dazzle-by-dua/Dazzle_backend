@@ -205,11 +205,24 @@
       async getById(id) {
         return await request(`/api/orders/${id}`);
       },
+      /**
+       * Get the currently authenticated customer's own orders.
+       * Uses the customer JWT (cookie or Authorization header).
+       * This is the primary My Orders data source — never use localStorage for this.
+       */
+      async getMyOrders() {
+        const token = getCustomerToken();
+        return await request("/api/customer/orders", {
+          headers: token ? { "Authorization": `Bearer ${token}` } : {}
+        });
+      },
       async create(order) {
         return await request("/api/orders", { method: "POST", body: order });
       },
-      async updateStatus(id, status) {
-        return await request(`/api/orders/${id}/status`, { method: "PATCH", body: { status } });
+      async updateStatus(id, statusValue, paymentStatus) {
+        const body = { status: statusValue };
+        if (paymentStatus) body.paymentStatus = paymentStatus;
+        return await request(`/api/orders/${id}/status`, { method: "PATCH", body });
       },
       async delete(id) {
         return await request(`/api/orders/${id}`, { method: "DELETE" });
@@ -399,6 +412,115 @@
       },
       async reset() {
         return await request("/api/backup/reset", { method: "POST" });
+      }
+    },
+
+    // =========================================================================
+    // Customer Authentication & Account (storefront-facing)
+    // =========================================================================
+    customer: {
+      /** Initiate signup: send OTP to email */
+      async signupInitiate(name, email) {
+        return await request("/api/customer/auth/signup/initiate", {
+          method: "POST", body: { name, email }
+        });
+      },
+      /** Resend OTP */
+      async signupResendOtp(email) {
+        return await request("/api/customer/auth/signup/resend-otp", {
+          method: "POST", body: { email }
+        });
+      },
+      /** Verify OTP — returns signup_token */
+      async signupVerifyOtp(email, otp) {
+        return await request("/api/customer/auth/signup/verify-otp", {
+          method: "POST", body: { email, otp }
+        });
+      },
+      /** Complete signup with password */
+      async signupComplete(email, signup_token, password, confirm_password) {
+        const res = await request("/api/customer/auth/signup/complete", {
+          method: "POST", body: { email, signup_token, password, confirm_password }
+        });
+        if (res && res.token) {
+          localStorage.setItem(API_CONFIG.STORAGE_CUSTOMER_KEY, JSON.stringify({
+            id: res.user && res.user.id,
+            name: res.user && res.user.name,
+            email: res.user && res.user.email,
+            token: res.token
+          }));
+        }
+        return res;
+      },
+      /**
+       * Log in a customer.
+       * Stores the JWT in localStorage so subsequent API calls (including
+       * createRazorpayOrder) automatically include the customer identity.
+       */
+      async login(email, password, remember_me = false) {
+        const res = await request("/api/customer/auth/login", {
+          method: "POST", body: { email, password, remember_me }
+        });
+        if (res && res.token) {
+          const sessionData = {
+            id: res.user && res.user.id,
+            name: res.user && res.user.name,
+            email: res.user && res.user.email,
+            token: res.token
+          };
+          if (remember_me) {
+            localStorage.setItem(API_CONFIG.STORAGE_CUSTOMER_KEY, JSON.stringify(sessionData));
+          } else {
+            sessionStorage.setItem(API_CONFIG.STORAGE_CUSTOMER_KEY, JSON.stringify(sessionData));
+          }
+        }
+        return res;
+      },
+      /** Get current customer profile */
+      async me() {
+        return await request("/api/customer/auth/me");
+      },
+      /** Log out current customer and clear stored session */
+      async logout() {
+        try {
+          await request("/api/customer/auth/logout", { method: "POST" });
+        } catch (e) { /* ignore network errors on logout */ }
+        localStorage.removeItem(API_CONFIG.STORAGE_CUSTOMER_KEY);
+        sessionStorage.removeItem(API_CONFIG.STORAGE_CUSTOMER_KEY);
+        return { success: true };
+      },
+      /** Get authenticated customer profile */
+      async getProfile() {
+        return await request("/api/customer/profile");
+      },
+      /** Update authenticated customer profile */
+      async updateProfile(updates) {
+        return await request("/api/customer/profile", { method: "PUT", body: updates });
+      },
+      /**
+       * Fetch all orders for the currently logged-in customer.
+       * SOURCE OF TRUTH: fetches from MongoDB via the backend.
+       * Never use localStorage as the primary order store.
+       * Call this after login, page load, and after successful checkout.
+       */
+      async getMyOrders() {
+        return await request("/api/customer/orders");
+      },
+      /** Forgot password */
+      async forgotPassword(email) {
+        return await request("/api/customer/auth/forgot-password", {
+          method: "POST", body: { email }
+        });
+      },
+      /** Verify reset token */
+      async verifyResetToken(token, email) {
+        return await request(`/api/customer/auth/verify-reset-token?token=${encodeURIComponent(token)}&email=${encodeURIComponent(email)}`);
+      },
+      /** Complete password reset */
+      async resetPassword(token, email, new_password, confirm_password) {
+        return await request("/api/customer/auth/reset-password", {
+          method: "POST", body: { token, email, new_password, confirm_password }
+        });
       }
     },
 
