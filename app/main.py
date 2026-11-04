@@ -60,7 +60,7 @@ app = FastAPI(
     - Live dashboard stats & inventory monitoring
     - Full store JSON database backup/export & restore
     """,
-    version="1.1.0",
+    version="1.2.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan
@@ -106,7 +106,7 @@ def root():
         "tagline": "Fine Jewellery",
         "api_status": "Online & Operational",
         "database": "MongoDB (Motor)",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "documentation": "/docs",
         "redoc": "/redoc"
     }
