@@ -438,17 +438,24 @@
         });
       },
       /** Complete signup with password */
-      async signupComplete(email, signup_token, password, confirm_password) {
+      async signupComplete(email, signup_token, password, confirm_password, remember_me = false) {
         const res = await request("/api/customer/auth/signup/complete", {
           method: "POST", body: { email, signup_token, password, confirm_password }
         });
         if (res && res.token) {
-          localStorage.setItem(API_CONFIG.STORAGE_CUSTOMER_KEY, JSON.stringify({
+          const sessionData = {
             id: res.user && res.user.id,
             name: res.user && res.user.name,
             email: res.user && res.user.email,
-            token: res.token
-          }));
+            token: res.token,
+            loginTime: new Date().toISOString()
+          };
+          sessionStorage.setItem(API_CONFIG.STORAGE_CUSTOMER_KEY, JSON.stringify(sessionData));
+          if (remember_me) {
+            localStorage.setItem(API_CONFIG.STORAGE_CUSTOMER_KEY, JSON.stringify(sessionData));
+          } else {
+            localStorage.removeItem(API_CONFIG.STORAGE_CUSTOMER_KEY);
+          }
         }
         return res;
       },
