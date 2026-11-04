@@ -105,44 +105,83 @@ async def delete_coupon(coupon_id: str, admin: dict = Depends(get_current_admin)
 
 @router.post("/coupons/validate", response_model=ValidateCouponResponse)
 async def validate_coupon(payload: ValidateCouponRequest):
-    code_clean = payload.code.strip().upper()
+    code_clean = (payload.code or "").strip().upper()
     db = get_database()
     row = await db.coupons.find_one({"code": code_clean, "active": True})
+
+    # Canonical fallback for built-in FREEDEL coupon
+    if not row and code_clean == "FREEDEL":
+        row = {
+            "id": "c_freedel",
+            "code": "FREEDEL",
+            "title": "Free Delivery",
+            "discount": 0.0,
+            "type": "free_delivery",
+            "minOrder": 0.0,
+            "expiry": "2030-12-31",
+            "desc": "Enjoy 100% complimentary delivery on your entire order.",
+            "badge": "Free Delivery",
+            "active": True
+        }
 
     if not row:
         return {
             "valid": False,
             "message": f"Invalid or expired coupon code '{code_clean}'.",
             "discountAmount": 0.0,
+            "deliveryDiscount": 0.0,
             "freeShipping": False
         }
 
     coupon = clean_doc(row)
 
-    if payload.orderTotal < coupon["minOrder"]:
+    min_order = float(coupon.get("minOrder", 0) or 0)
+    if payload.orderTotal < min_order:
         return {
             "valid": False,
-            "message": f"Order total must be at least ?{coupon['minOrder']:,.0f} to apply code '{code_clean}'.",
+            "message": f"Order total must be at least ₹{min_order:,.0f} to apply code '{code_clean}'.",
             "discountAmount": 0.0,
+            "deliveryDiscount": 0.0,
             "freeShipping": False,
             "coupon": coupon
         }
 
     discount_amount = 0.0
+    delivery_discount = 0.0
     free_shipping = False
 
-    if coupon["type"] == "percent":
-        discount_amount = round(payload.orderTotal * (coupon["discount"] / 100.0), 2)
-    elif coupon["type"] == "fixed":
-        discount_amount = min(payload.orderTotal, coupon["discount"])
-    elif coupon["type"] == "free_shipping":
+    ctype = coupon.get("type", "percent")
+    if ctype in ["free_delivery", "free_shipping"] or code_clean == "FREEDEL":
         free_shipping = True
+        if payload.deliveryFee is not None and payload.deliveryFee > 0:
+            delivery_discount = float(payload.deliveryFee)
+        elif payload.city or payload.state or payload.address:
+            from app.delivery_rules import calculate_delivery_charge
+            try:
+                d_info = calculate_delivery_charge(city=payload.city, state=payload.state, address=payload.address)
+                delivery_discount = float(d_info.get("delivery_fee", 0.0))
+            except Exception:
+                delivery_discount = 0.0
+        return {
+            "valid": True,
+            "message": f"Coupon '{coupon['code']}' applied! 100% free delivery.",
+            "discountAmount": 0.0,
+            "deliveryDiscount": delivery_discount,
+            "discountType": ctype,
+            "freeShipping": True,
+            "coupon": coupon
+        }
+    elif ctype == "percent":
+        discount_amount = round(payload.orderTotal * (float(coupon.get("discount", 0)) / 100.0), 2)
+    elif ctype == "fixed":
+        discount_amount = min(payload.orderTotal, float(coupon.get("discount", 0)))
 
     return {
         "valid": True,
         "message": f"Coupon '{coupon['code']}' applied successfully!",
         "discountAmount": discount_amount,
-        "discountType": coupon["type"],
+        "deliveryDiscount": 0.0,
+        "discountType": ctype,
         "freeShipping": free_shipping,
         "coupon": coupon
     }

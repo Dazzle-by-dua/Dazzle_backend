@@ -188,11 +188,16 @@ class OffersOut(BaseModel):
 class ValidateCouponRequest(BaseModel):
     code: str
     orderTotal: float
+    deliveryFee: Optional[float] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    address: Optional[str] = None
 
 class ValidateCouponResponse(BaseModel):
     valid: bool
     message: str
     discountAmount: float = 0.0
+    deliveryDiscount: float = 0.0
     discountType: Optional[str] = None
     freeShipping: bool = False
     coupon: Optional[CouponOut] = None
@@ -267,6 +272,10 @@ class OrderOut(BaseModel):
     discount: Optional[float] = None
     shipping_fee: Optional[float] = None
     delivery_fee: Optional[float] = None
+    original_delivery_charge: Optional[float] = None
+    final_delivery_charge: Optional[float] = None
+    delivery_discount: Optional[float] = None
+    coupon_code: Optional[str] = None
     delivery_location_type: Optional[str] = None
     city: Optional[str] = None
     state: Optional[str] = None

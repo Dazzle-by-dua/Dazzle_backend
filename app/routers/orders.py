@@ -109,30 +109,73 @@ async def calculate_trusted_order_total(
             "img": item_img
         })
 
-    # Discount calculation if coupon provided
-    discount = 0.0
-    if coupon_code:
-        code_clean = coupon_code.strip().upper()
-        coupon = await db.offers.find_one({"code": code_clean})
-        if not coupon:
-            coupon = await db.coupons.find_one({"code": code_clean})
-        if coupon and coupon.get("active", True):
-            min_order = float(coupon.get("minOrder", 0))
-            if subtotal >= min_order:
-                ctype = coupon.get("type", "percent")
-                cval = float(coupon.get("discount", 0))
-                if ctype == "percent":
-                    discount = (subtotal * cval) / 100.0
-                elif ctype == "fixed":
-                    discount = min(cval, subtotal)
-
     # Location-based fixed delivery fee:
     # Hyderabad: ₹50, Telangana: ₹70, All other Indian States/UTs: ₹90
     delivery_info = calculate_delivery_charge(city=city, state=state, address=address)
-    shipping_fee = float(delivery_info["delivery_fee"])
+    original_shipping_fee = float(delivery_info["delivery_fee"])
 
-    total = max(0.0, round(subtotal - discount + shipping_fee, 2))
-    return total, subtotal, discount, verified_items, shipping_fee, delivery_info
+    # Authoritative Coupon & Discount calculation
+    discount = 0.0
+    delivery_discount = 0.0
+    applied_coupon_code = None
+
+    if coupon_code and str(coupon_code).strip():
+        code_clean = str(coupon_code).strip().upper()
+        coupon = await db.coupons.find_one({"code": code_clean, "active": True})
+        if not coupon:
+            coupon = await db.offers.find_one({"code": code_clean})
+        # Canonical fallback for built-in FREEDEL coupon
+        if not coupon and code_clean == "FREEDEL":
+            coupon = {
+                "id": "c_freedel",
+                "code": "FREEDEL",
+                "title": "Free Delivery",
+                "discount": 0.0,
+                "type": "free_delivery",
+                "minOrder": 0.0,
+                "active": True
+            }
+
+        if not coupon or not coupon.get("active", True):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid or expired coupon code '{code_clean}'."
+            )
+
+        min_order = float(coupon.get("minOrder", 0) or 0)
+        if subtotal < min_order:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Order subtotal must be at least ₹{min_order:,.0f} to apply coupon '{code_clean}'."
+            )
+
+        applied_coupon_code = coupon.get("code", code_clean).upper()
+        ctype = coupon.get("type", "percent")
+        if ctype in ["free_delivery", "free_shipping"] or applied_coupon_code == "FREEDEL":
+            # 100% discount on delivery fee only; product subtotal remains untouched
+            discount = 0.0
+            delivery_discount = original_shipping_fee
+        elif ctype == "percent":
+            cval = float(coupon.get("discount", 0))
+            discount = round((subtotal * cval) / 100.0, 2)
+            delivery_discount = 0.0
+        elif ctype == "fixed":
+            cval = float(coupon.get("discount", 0))
+            discount = min(cval, subtotal)
+            delivery_discount = 0.0
+
+    final_shipping_fee = max(0.0, round(original_shipping_fee - delivery_discount, 2))
+    total = max(0.0, round(subtotal - discount + final_shipping_fee, 2))
+
+    coupon_meta = {
+        "coupon_code": applied_coupon_code,
+        "discount": discount,
+        "delivery_discount": delivery_discount,
+        "original_delivery_charge": original_shipping_fee,
+        "final_delivery_charge": final_shipping_fee
+    }
+
+    return total, subtotal, discount, verified_items, final_shipping_fee, delivery_info, coupon_meta
 
 
 # ========================================================
@@ -167,7 +210,7 @@ async def create_razorpay_order_endpoint(
         raise HTTPException(status_code=400, detail="Cart is empty. Cannot create order.")
 
     db = get_database()
-    trusted_total, subtotal, discount, verified_items, shipping_fee, delivery_info = await calculate_trusted_order_total(
+    trusted_total, subtotal, discount, verified_items, shipping_fee, delivery_info, coupon_meta = await calculate_trusted_order_total(
         db=db,
         items=payload.items,
         coupon_code=payload.coupon_code,
@@ -217,6 +260,10 @@ async def create_razorpay_order_endpoint(
         "discount": discount,
         "shipping_fee": shipping_fee,
         "delivery_fee": shipping_fee,
+        "original_delivery_charge": coupon_meta["original_delivery_charge"],
+        "final_delivery_charge": coupon_meta["final_delivery_charge"],
+        "delivery_discount": coupon_meta["delivery_discount"],
+        "coupon_code": coupon_meta["coupon_code"],
         "delivery_location_type": delivery_info["rate_type"],
         "city": delivery_info["city"],
         "state": delivery_info["state"],
@@ -251,6 +298,10 @@ async def create_razorpay_order_endpoint(
         "discount": discount,
         "shipping_fee": shipping_fee,
         "delivery_fee": shipping_fee,
+        "original_delivery_charge": coupon_meta["original_delivery_charge"],
+        "final_delivery_charge": coupon_meta["final_delivery_charge"],
+        "delivery_discount": coupon_meta["delivery_discount"],
+        "coupon_code": coupon_meta["coupon_code"],
         "customer": {
             "name": payload.customer,
             "email": payload.email,
@@ -503,7 +554,7 @@ async def create_order(
 
     # Authoritative calculation of trusted total and location-based delivery fee
     if payload.items and len(payload.items) > 0:
-        trusted_total, subtotal, discount, verified_items, shipping_fee, delivery_info = await calculate_trusted_order_total(
+        trusted_total, subtotal, discount, verified_items, shipping_fee, delivery_info, coupon_meta = await calculate_trusted_order_total(
             db=db,
             items=payload.items,
             coupon_code=payload.coupon_code,
@@ -519,6 +570,13 @@ async def create_order(
         discount = 0.0
         trusted_total = max(0.0, round(subtotal + shipping_fee, 2))
         items_dict_list = [item.model_dump() for item in payload.items]
+        coupon_meta = {
+            "coupon_code": None,
+            "discount": 0.0,
+            "delivery_discount": 0.0,
+            "original_delivery_charge": shipping_fee,
+            "final_delivery_charge": shipping_fee
+        }
 
     # Standard storefront order creation (e.g. Cash on Delivery) must always default to Pending.
     # Never mark orders as Paid without cryptographic gateway verification.
@@ -535,6 +593,10 @@ async def create_order(
         "discount": discount,
         "shipping_fee": shipping_fee,
         "delivery_fee": shipping_fee,
+        "original_delivery_charge": coupon_meta["original_delivery_charge"],
+        "final_delivery_charge": coupon_meta["final_delivery_charge"],
+        "delivery_discount": coupon_meta["delivery_discount"],
+        "coupon_code": coupon_meta["coupon_code"],
         "delivery_location_type": delivery_info["rate_type"],
         "city": delivery_info["city"],
         "state": delivery_info["state"],

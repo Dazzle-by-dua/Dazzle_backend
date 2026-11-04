@@ -299,6 +299,22 @@ class DatabaseManager:
                     "badge": cp.get("badge"),
                     "active": bool(cp.get("active", True))
                 })
+        else:
+            # Ensure FREEDEL coupon exists in populated database
+            freedel_cp = await self.db.coupons.find_one({"code": "FREEDEL"})
+            if not freedel_cp:
+                await self.db.coupons.insert_one({
+                    "id": "c_freedel",
+                    "code": "FREEDEL",
+                    "title": "Free Delivery",
+                    "discount": 0.0,
+                    "type": "free_delivery",
+                    "minOrder": 0.0,
+                    "expiry": "2030-12-31",
+                    "desc": "Enjoy 100% complimentary delivery on your entire order.",
+                    "badge": "Free Delivery",
+                    "active": True
+                })
 
         if await self.db.combos.count_documents({}) == 0:
             for cb in DEFAULT_OFFERS.get("combos", []):
