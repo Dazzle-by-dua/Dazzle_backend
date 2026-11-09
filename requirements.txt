@@ -17,3 +17,5 @@ cloudinary>=1.41.0
 razorpay>=2.0.0
 resend>=2.6.0
 argon2-cffi>=25.1.0
+Pillow>=10.4.0
+
