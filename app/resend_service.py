@@ -487,7 +487,7 @@ async def send_new_order_admin_notification(order: Dict[str, Any], db=None) -> D
 
     try:
         # Run synchronous Resend SDK call in a separate thread to avoid blocking FastAPI
-        response = await asyncio.to_thread(resend.Emails.send, params)
+        response = await asyncio.to_thread(resend.Emails.send, **params)
         resend_id = response.get("id") if isinstance(response, dict) else getattr(response, "id", None)
         if not resend_id:
             raise RuntimeError(f"Resend API did not return a valid message id: {response}")
@@ -636,7 +636,7 @@ If you did not request this code, you can safely ignore this email.
     }
 
     try:
-        response = await asyncio.to_thread(resend.Emails.send, params)
+        response = await asyncio.to_thread(resend.Emails.send, **params)
         res_id = response.get("id") if isinstance(response, dict) else getattr(response, "id", None)
         logger.info(f"OTP verification email sent to {email} (ID: {res_id})")
         return {"success": True, "id": res_id}
@@ -742,7 +742,7 @@ If you did not request a password reset, you can safely ignore this email.
     }
 
     try:
-        response = await asyncio.to_thread(resend.Emails.send, params)
+        response = await asyncio.to_thread(resend.Emails.send, **params)
         res_id = response.get("id") if isinstance(response, dict) else getattr(response, "id", None)
         logger.info(f"Password reset email sent to {email} (ID: {res_id})")
         return {"success": True, "id": res_id}
@@ -828,7 +828,7 @@ If you did not perform this change, please contact us immediately.
     }
 
     try:
-        response = await asyncio.to_thread(resend.Emails.send, params)
+        response = await asyncio.to_thread(resend.Emails.send, **params)
         res_id = response.get("id") if isinstance(response, dict) else getattr(response, "id", None)
         return {"success": True, "id": res_id}
     except Exception as e:
