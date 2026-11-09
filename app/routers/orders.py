@@ -1,4 +1,6 @@
+import asyncio
 import random
+
 import logging
 import datetime
 from typing import List, Optional
@@ -296,28 +298,14 @@ async def create_razorpay_order_endpoint(
     }
     await db.orders.insert_one(doc)
 
-    return {
-        "success": True,
-        "key_id": rzp_res["key_id"],
-        "razorpay_order_id": rzp_res["razorpay_order_id"],
-        "amount": rzp_res["amount"],  # In paise for Razorpay Standard Checkout
-        "currency": "INR",
-        "order_id": order_id,
-        "total": trusted_total,
-        "subtotal": subtotal,
-        "discount": discount,
-        "shipping_fee": shipping_fee,
-        "delivery_fee": shipping_fee,
-        "original_delivery_charge": coupon_meta["original_delivery_charge"],
-        "final_delivery_charge": coupon_meta["final_delivery_charge"],
-        "delivery_discount": coupon_meta["delivery_discount"],
-        "coupon_code": coupon_meta["coupon_code"],
-        "customer": {
-            "name": payload.customer,
-            "email": payload.email,
-            "contact": payload.phone
-        }
-    }
+    # Notify admin of new order creation (pre‑payment).
+    try:
+        from app.resend_service import send_new_order_admin_notification
+        # Fire‑and‑forget – we don’t block order creation on email success.
+        # Errors are logged inside the helper.
+        asyncio.create_task(send_new_order_admin_notification(doc, db))
+    except Exception as e:
+        logger.warning(f"Failed to trigger admin order email after creation for Order #{order_id}: {e}")
 
 
 @router.post("/razorpay/verify")
