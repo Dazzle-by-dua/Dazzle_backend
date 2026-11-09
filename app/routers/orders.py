@@ -34,6 +34,7 @@ from app.razorpay_service import (
     get_razorpay_status,
     is_razorpay_configured
 )
+from app.config import RAZORPAY_KEY_ID
 
 router = APIRouter(prefix="/api/orders", tags=["Orders"])
 
@@ -306,6 +307,15 @@ async def create_razorpay_order_endpoint(
         asyncio.create_task(send_new_order_admin_notification(doc, db))
     except Exception as e:
         logger.warning(f"Failed to trigger admin order email after creation for Order #{order_id}: {e}")
+    # Return Razorpay order details for the frontend (always)
+    return {
+        "order_id": order_id,
+        "razorpay_order_id": rzp_res["razorpay_order_id"],
+        "amount": rzp_res["amount"],
+        "currency": rzp_res.get("currency", "INR"),
+        "key_id": RAZORPAY_KEY_ID,
+        "status": rzp_res.get("status", "created")
+    }
 
 
 @router.post("/razorpay/verify")
