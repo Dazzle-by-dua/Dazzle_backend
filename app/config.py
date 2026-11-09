@@ -60,9 +60,26 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 
-# CORS
-cors_raw = os.getenv("CORS_ORIGINS", "*")
-CORS_ORIGINS = [orig.strip() for orig in cors_raw.split(",") if orig.strip()]
+# CORS Configuration: Explicit origins required for credentialed (cookie) authentication
+DEFAULT_CORS_ORIGINS = [
+    "https://dazzlebydua.com",
+    "https://www.dazzlebydua.com",
+    "https://dazzle-by-dua.github.io",
+    "http://localhost:5500",
+    "http://127.0.0.1:5500",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+cors_raw = os.getenv("CORS_ORIGINS", "").strip()
+if cors_raw and cors_raw != "*":
+    CORS_ORIGINS = [orig.strip() for orig in cors_raw.split(",") if orig.strip()]
+    for def_orig in DEFAULT_CORS_ORIGINS:
+        if def_orig not in CORS_ORIGINS:
+            CORS_ORIGINS.append(def_orig)
+else:
+    CORS_ORIGINS = DEFAULT_CORS_ORIGINS
 
 # Cloudinary Image Storage
 CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME", "").strip()

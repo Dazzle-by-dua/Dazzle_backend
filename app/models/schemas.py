@@ -497,9 +497,30 @@ class AdminProfile(BaseModel):
 
 class AdminLoginResponse(BaseModel):
     success: bool
-    user: AdminProfile
-    token: str
-    loginTime: str
+    user: Optional[AdminProfile] = None
+    token: Optional[str] = None
+    loginTime: Optional[str] = None
+    requires_2fa: Optional[bool] = False
+    temp_token: Optional[str] = None
+    message: Optional[str] = None
+
+class Admin2FASetupResponse(BaseModel):
+    success: bool
+    secret: str
+    otpauth_url: str
+    recovery_codes: List[str]
+    message: str
+
+class Admin2FAVerifyRequest(BaseModel):
+    code: str = Field(..., min_length=6, max_length=6)
+
+class Admin2FALoginRequest(BaseModel):
+    temp_token: str
+    code: str
+
+class Admin2FADisableRequest(BaseModel):
+    password: str
+    code: str
 
 # ========================================================
 # 13. Dashboard Stats Schemas

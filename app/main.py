@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from app.config import CORS_ORIGINS, UPLOAD_DIR
+from app.config import CORS_ORIGINS, UPLOAD_DIR, IS_PRODUCTION
 from app.database import init_db, close_db, check_db_health
 from app.routers import (
     auth,
@@ -66,10 +66,116 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Security Headers Middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if IS_PRODUCTION:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+PUBLIC_STOREFRONT_PATHS = {
+    "/api/auth/login",
+    "/api/auth/login/2fa",
+    "/api/customer/auth/signup/initiate",
+    "/api/customer/auth/signup/verify-otp",
+    "/api/customer/auth/signup/resend-otp",
+    "/api/customer/auth/signup/complete",
+    "/api/customer/auth/login",
+    "/api/customer/auth/forgot-password",
+    "/api/customer/auth/verify-reset-otp",
+    "/api/customer/auth/reset-password",
+    "/api/delivery-charge",
+    "/api/offers/coupons/validate",
+    "/api/reviews",
+}
+
+def is_cookie_authenticated_request(request: Request) -> bool:
+    """
+    Determine if the incoming mutation request is authenticating via ambient browser cookies
+    and thus subject to CSRF Origin/Referer verification.
+    """
+    path = request.url.path.rstrip("/").lower() or "/"
+    if (
+        path in PUBLIC_STOREFRONT_PATHS
+        or path.startswith("/api/orders/razorpay")
+        or path.startswith("/api/webhooks")
+    ):
+        return False
+
+    auth_header = request.headers.get("authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        return False
+
+    admin_cookie = request.cookies.get("admin_token")
+    customer_cookie = request.cookies.get("customer_token")
+
+    # Storefront orders: cookie-authenticated only if placed with a customer session cookie
+    if path == "/api/orders":
+        return bool(customer_cookie)
+
+    # Customer protected endpoints
+    if path.startswith("/api/customer"):
+        return bool(customer_cookie)
+
+    # Admin mutation endpoints
+    return bool(admin_cookie)
+
+# CSRF & Origin Verification Middleware for Cookie-Authenticated Requests
+@app.middleware("http")
+async def verify_csrf_and_origin(request: Request, call_next):
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        if is_cookie_authenticated_request(request):
+            origin = request.headers.get("origin")
+            referer = request.headers.get("referer")
+
+            # 1. Reject when both Origin and Referer headers are missing
+            if not origin and not referer:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Cross-Origin Request Blocked: Missing Origin and Referer headers."}
+                )
+
+            # 2. Reject Origin: null explicitly (sandboxed iframes, local file attacks) and unauthorized origins
+            if origin:
+                if origin.strip().lower() == "null" or origin not in CORS_ORIGINS:
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": "Cross-Origin Request Blocked: Unauthorized Origin."}
+                    )
+
+            # 3. Reject unauthorized or malformed referers
+            if referer:
+                try:
+                    from urllib.parse import urlparse
+                    ref_parts = urlparse(referer)
+                    if not ref_parts.scheme or not ref_parts.netloc:
+                        return JSONResponse(
+                            status_code=403,
+                            content={"detail": "Cross-Origin Request Blocked: Malformed Referer."}
+                        )
+                    ref_origin = f"{ref_parts.scheme}://{ref_parts.netloc}"
+                    if ref_origin not in CORS_ORIGINS:
+                        return JSONResponse(
+                            status_code=403,
+                            content={"detail": "Cross-Origin Request Blocked: Unauthorized Referer."}
+                        )
+                except Exception:
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": "Cross-Origin Request Blocked: Malformed Referer."}
+                    )
+
+    return await call_next(request)
+
 # CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS if CORS_ORIGINS != ["*"] else ["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

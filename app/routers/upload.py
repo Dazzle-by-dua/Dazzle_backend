@@ -12,6 +12,8 @@ from app.cloudinary_service import (
     get_cloudinary_health
 )
 
+from app.routers.media import validate_image_signature
+
 router = APIRouter(prefix="/api/upload", tags=["Cloudinary Upload"])
 
 class DeleteImageRequest(BaseModel):
@@ -38,26 +40,40 @@ async def upload_image(
 ):
     """
     Upload an image from device directly to Cloudinary.
-    Saves image metadata to MongoDB media collection and returns secure URL.
+    Validates MIME-type, enforces 10MB chunked streaming limit,
+    verifies magic bytes signatures, and saves metadata to MongoDB.
     """
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(
             status_code=400,
-            detail="Only image files (JPEG, PNG, WEBP, GIF, SVG, AVIF) are allowed."
+            detail="Only image files (JPEG, PNG, WEBP, GIF, AVIF) are allowed."
         )
 
-    # Read file buffer
-    file_bytes = await file.read()
-    if len(file_bytes) == 0:
+    # Enforce 10 MB limit while reading chunks before loading entire stream into memory
+    MAX_FILE_SIZE = 10 * 1024 * 1024
+    CHUNK_SIZE = 64 * 1024
+    chunks = []
+    total_size = 0
+
+    while True:
+        chunk = await file.read(CHUNK_SIZE)
+        if not chunk:
+            break
+        total_size += len(chunk)
+        if total_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Image size exceeds the 10 MB limit (uploaded: >10 MB). Please choose a smaller file."
+            )
+        chunks.append(chunk)
+
+    if total_size == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    # Maximum allowed upload size (10 MB)
-    MAX_FILE_SIZE = 10 * 1024 * 1024
-    if len(file_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Image size exceeds the 10 MB limit (uploaded: {len(file_bytes) / (1024 * 1024):.1f} MB). Please choose a smaller file."
-        )
+    file_bytes = b"".join(chunks)
+
+    # Validate actual file signature (magic bytes) to defeat MIME-spoofing and reject SVGs
+    detected_format = validate_image_signature(file_bytes)
 
     original_filename = Path(file.filename or "image.jpg").name
     display_title = title or original_filename.rsplit(".", 1)[0].replace("_", " ").title()

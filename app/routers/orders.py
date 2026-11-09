@@ -2,8 +2,9 @@ import random
 import logging
 import datetime
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query, Depends, status
+from fastapi import APIRouter, HTTPException, Query, Depends, status, Request
 from app.database import get_database, clean_doc, clean_docs
+from app.rate_limiter import RateLimiter
 
 logger = logging.getLogger("dazzle.orders")
 
@@ -34,6 +35,8 @@ from app.razorpay_service import (
 
 router = APIRouter(prefix="/api/orders", tags=["Orders"])
 
+order_rate_limiter = RateLimiter(max_requests=15, window_seconds=600, key_prefix="order_create")
+
 async def calculate_trusted_order_total(
     db,
     items: list,
@@ -59,10 +62,10 @@ async def calculate_trusted_order_total(
         raw_qty = item_dict.get("qty", 1)
         try:
             qty = int(raw_qty)
-            if qty < 1:
+            if qty < 1 or qty > 100:
                 raise ValueError()
         except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail=f"Quantity for product ID '{pid}' must be a positive integer.")
+            raise HTTPException(status_code=400, detail=f"Quantity for product ID '{pid}' must be a positive integer between 1 and 100.")
 
         # Lookup true price & availability from MongoDB products collection
         product = None
@@ -81,22 +84,26 @@ async def calculate_trusted_order_total(
                     product = def_p
                     break
 
-        if product:
-            if not product.get("inStock", True):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Product '{product.get('name', pid)}' is currently out of stock."
-                )
-            trusted_price = float(product.get("price", 0.0))
-            item_name = product.get("name", item_dict.get("name", "Jewellery Item"))
-            item_img = product.get("img", item_dict.get("img", ""))
-        else:
-            # Fall back to cart item price & name so checkout never fails for custom or archived items
-            trusted_price = float(item_dict.get("price", 0.0))
-            if trusted_price <= 0:
-                raise HTTPException(status_code=400, detail=f"Product with ID '{pid}' does not exist.")
-            item_name = item_dict.get("name", "Jewellery Item")
-            item_img = item_dict.get("img", "")
+        if not product:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Product with ID '{pid}' does not exist or is not available."
+            )
+
+        if not product.get("inStock", True):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Product '{product.get('name', pid)}' is currently out of stock."
+            )
+
+        trusted_price = float(product.get("price", 0.0))
+        if trusted_price <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid pricing configured for product '{product.get('name', pid)}'."
+            )
+        item_name = product.get("name", "Jewellery Item")
+        item_img = product.get("img", item_dict.get("img", ""))
 
         line_total = trusted_price * qty
         subtotal += line_total
@@ -198,6 +205,7 @@ async def get_razorpay_public_config():
 @router.post("/razorpay/create-order")
 async def create_razorpay_order_endpoint(
     payload: RazorpayOrderCreateRequest,
+    request: Request,
     customer: Optional[dict] = Depends(get_current_customer_optional)
 ):
     """
@@ -206,6 +214,8 @@ async def create_razorpay_order_endpoint(
     Associates the order with the authenticated customer's permanent ID so it
     appears in their My Orders section immediately after payment confirmation.
     """
+    await order_rate_limiter.check_request(request)
+
     if not payload.items or len(payload.items) == 0:
         raise HTTPException(status_code=400, detail="Cart is empty. Cannot create order.")
 
@@ -411,17 +421,40 @@ async def verify_razorpay_payment_endpoint(payload: RazorpayPaymentVerifyRequest
     }
 
 @router.post("/razorpay/payment-failed")
-async def record_payment_failure_endpoint(payload: RazorpayPaymentFailedRequest):
+async def record_payment_failure_endpoint(
+    payload: RazorpayPaymentFailedRequest,
+    admin: Optional[dict] = Depends(get_current_admin_optional),
+    customer: Optional[dict] = Depends(get_current_customer_optional)
+):
     """
     Record payment failure or cancellation without incorrectly marking order as paid.
     Never overwrites an already-confirmed 'Paid' status.
+    Requires admin privileges, matching customer account, or matching Razorpay order ID.
     """
     db = get_database()
     order = await db.orders.find_one({"id": payload.order_id})
     if not order and payload.razorpay_order_id:
         order = await db.orders.find_one({"razorpay_order_id": payload.razorpay_order_id})
 
-    if order and order.get("paymentStatus") == "Paid":
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found.")
+
+    # Authorization verification
+    is_authorized = False
+    if admin:
+        is_authorized = True
+    elif customer and order.get("email", "").strip().lower() == customer.get("email", "").strip().lower():
+        is_authorized = True
+    elif payload.razorpay_order_id and order.get("razorpay_order_id") == payload.razorpay_order_id:
+        is_authorized = True
+
+    if not is_authorized:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. You do not have permission to update this order."
+        )
+
+    if order.get("paymentStatus") == "Paid":
         return {
             "success": True,
             "message": "Order is already paid; payment failure ignored.",
@@ -429,22 +462,21 @@ async def record_payment_failure_endpoint(payload: RazorpayPaymentFailedRequest)
         }
 
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    if order:
-        await db.orders.update_one(
-            {"id": order["id"]},
-            {
-                "$set": {
-                    "paymentStatus": "Failed",
-                    "paymentError": {
-                        "code": payload.error_code,
-                        "description": payload.error_description,
-                        "reason": payload.error_reason,
-                        "payment_id": payload.razorpay_payment_id
-                    },
-                    "updated_at": now_iso
-                }
+    await db.orders.update_one(
+        {"id": order["id"]},
+        {
+            "$set": {
+                "paymentStatus": "Failed",
+                "paymentError": {
+                    "code": payload.error_code,
+                    "description": payload.error_description,
+                    "reason": payload.error_reason,
+                    "payment_id": payload.razorpay_payment_id
+                },
+                "updated_at": now_iso
             }
-        )
+        }
+    )
 
     return {
         "success": True,
@@ -453,10 +485,15 @@ async def record_payment_failure_endpoint(payload: RazorpayPaymentFailedRequest)
     }
 
 @router.get("/{order_id}/payment-status")
-async def get_order_payment_status(order_id: str):
+async def get_order_payment_status(
+    order_id: str,
+    rzp_order_id: Optional[str] = Query(None),
+    admin: Optional[dict] = Depends(get_current_admin_optional),
+    customer: Optional[dict] = Depends(get_current_customer_optional)
+):
     """
     Retrieve payment status of an order for customer confirmation or status polling.
-    Supports lookup by internal order ID or Razorpay order ID.
+    Requires admin access, matching customer session, or knowledge of the unique Razorpay order ID.
     """
     db = get_database()
     order = await db.orders.find_one({"id": order_id})
@@ -464,6 +501,23 @@ async def get_order_payment_status(order_id: str):
         order = await db.orders.find_one({"razorpay_order_id": order_id})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
+
+    # Authorization verification
+    is_authorized = False
+    if admin:
+        is_authorized = True
+    elif customer and order.get("email", "").strip().lower() == customer.get("email", "").strip().lower():
+        is_authorized = True
+    elif order.get("razorpay_order_id") and (
+        order_id == order.get("razorpay_order_id") or rzp_order_id == order.get("razorpay_order_id")
+    ):
+        is_authorized = True
+
+    if not is_authorized:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication or Razorpay order confirmation credentials required to view payment status."
+        )
 
     return {
         "id": order.get("id"),
@@ -536,9 +590,12 @@ async def get_order_by_id(
 @router.post("", response_model=OrderOut, status_code=201)
 async def create_order(
     payload: OrderCreate,
+    request: Request,
     customer: Optional[dict] = Depends(get_current_customer_optional)
 ):
     """Standard order creation (Cash on Delivery or direct record)."""
+    await order_rate_limiter.check_request(request)
+
     db = get_database()
     now = datetime.datetime.now()
     now_iso = now.isoformat()
@@ -553,30 +610,21 @@ async def create_order(
                 break
 
     # Authoritative calculation of trusted total and location-based delivery fee
-    if payload.items and len(payload.items) > 0:
-        trusted_total, subtotal, discount, verified_items, shipping_fee, delivery_info, coupon_meta = await calculate_trusted_order_total(
-            db=db,
-            items=payload.items,
-            coupon_code=payload.coupon_code,
-            city=payload.city,
-            state=payload.state,
-            address=payload.address
+    if not payload.items or len(payload.items) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Order must contain at least one item. Cart is empty."
         )
-        items_dict_list = verified_items
-    else:
-        delivery_info = calculate_delivery_charge(city=payload.city, state=payload.state, address=payload.address)
-        shipping_fee = float(delivery_info["delivery_fee"])
-        subtotal = float(payload.total or 0.0)
-        discount = 0.0
-        trusted_total = max(0.0, round(subtotal + shipping_fee, 2))
-        items_dict_list = [item.model_dump() for item in payload.items]
-        coupon_meta = {
-            "coupon_code": None,
-            "discount": 0.0,
-            "delivery_discount": 0.0,
-            "original_delivery_charge": shipping_fee,
-            "final_delivery_charge": shipping_fee
-        }
+
+    trusted_total, subtotal, discount, verified_items, shipping_fee, delivery_info, coupon_meta = await calculate_trusted_order_total(
+        db=db,
+        items=payload.items,
+        coupon_code=payload.coupon_code,
+        city=payload.city,
+        state=payload.state,
+        address=payload.address
+    )
+    items_dict_list = verified_items
 
     # Standard storefront order creation (e.g. Cash on Delivery) must always default to Pending.
     # Never mark orders as Paid without cryptographic gateway verification.
@@ -600,15 +648,15 @@ async def create_order(
         "delivery_location_type": delivery_info["rate_type"],
         "city": delivery_info["city"],
         "state": delivery_info["state"],
-        "status": payload.status or "Processing",
+        "status": "Processing",
         "paymentMethod": payload.paymentMethod or "Cash on Delivery",
         "paymentStatus": pay_status,
         "address": payload.address or "",
         "landmark": payload.landmark or "",
         "postal_code": payload.postal_code,
         "items": items_dict_list,
-        "razorpay_order_id": payload.razorpay_order_id,
-        "razorpay_payment_id": payload.razorpay_payment_id,
+        "razorpay_order_id": None,
+        "razorpay_payment_id": None,
         "currency": payload.currency or "INR",
         "notes": payload.notes,
         "is_guest": not bool(customer),

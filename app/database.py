@@ -4,7 +4,7 @@ import datetime
 import logging
 from typing import Optional, Dict, Any, List
 import bcrypt
-from app.config import MONGODB_URI, MONGODB_DB, UPLOAD_DIR
+from app.config import MONGODB_URI, MONGODB_DB, UPLOAD_DIR, IS_PRODUCTION
 from app.seed_data import (
     DEFAULT_PRODUCTS,
     DEFAULT_CATEGORIES,
@@ -28,15 +28,44 @@ from app.security import get_password_hash
 def hash_password(password: str) -> str:
     return get_password_hash(password)
 
-def clean_doc(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    if not doc:
-        return None
-    d = dict(doc)
-    d.pop("_id", None)
-    return d
+SENSITIVE_DOC_KEYS = {
+    "_id", "password_hash", "two_factor", "two_factor_pending",
+    "otp_verifier", "signup_token_hash", "reset_token_hash",
+    "recovery_codes", "hashed_recovery_codes"
+}
 
-def clean_docs(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return [clean_doc(d) for d in docs if d is not None]
+def clean_doc(doc: Any) -> Any:
+    """
+    Recursively sanitize dictionaries and lists, stripping all sensitive internal keys
+    (e.g., _id, password_hash, two_factor, otp_verifier, token hashes) from every nesting level,
+    while strictly preserving all legitimate public fields.
+    """
+    if doc is None:
+        return None
+
+    if isinstance(doc, dict):
+        cleaned = {}
+        for k, v in doc.items():
+            if k in SENSITIVE_DOC_KEYS:
+                continue
+            cleaned[k] = clean_doc(v)
+        return cleaned
+
+    if isinstance(doc, list):
+        return [clean_doc(item) for item in doc]
+
+    if isinstance(doc, tuple):
+        return tuple(clean_doc(item) for item in doc)
+
+    return doc
+
+def clean_docs(docs: Any) -> List[Any]:
+    """Recursively clean a collection or list of documents."""
+    if not docs:
+        return []
+    if isinstance(docs, list):
+        return [clean_doc(d) for d in docs if d is not None]
+    return clean_doc(docs)
 
 class DatabaseManager:
     def __init__(self):
@@ -76,9 +105,16 @@ class DatabaseManager:
                 self.connection_error = safe_err
                 print(f"MongoDB connection failed: {safe_err}")
                 logger.error(f"MongoDB connection failed: {safe_err}")
+                if IS_PRODUCTION:
+                    raise RuntimeError(f"CRITICAL PRODUCTION FAILURE: Could not connect to MongoDB database: {safe_err}")
         else:
-            print("MongoDB configuration detected: None (URI not provided)")
-            logger.warning("MongoDB configuration detected: None (URI not provided)")
+            if IS_PRODUCTION:
+                raise RuntimeError(
+                    "CRITICAL PRODUCTION CONFIGURATION ERROR: MONGODB_URI is required in production. "
+                    "Silent in-memory mock database fallback is strictly prohibited in production."
+                )
+            print("MongoDB configuration detected: None (URI not provided - using development mock)")
+            logger.warning("MongoDB configuration detected: None (URI not provided - using development mock)")
             print(f"MongoDB database: {MONGODB_DB}")
             logger.info(f"MongoDB database: {MONGODB_DB}")
             from mongomock_motor import AsyncMongoMockClient
@@ -166,6 +202,8 @@ class DatabaseManager:
                 )
                 self.db = self.client[MONGODB_DB]
             else:
+                if IS_PRODUCTION:
+                    raise RuntimeError("CRITICAL PRODUCTION CONFIGURATION ERROR: MONGODB_URI is required in production.")
                 from mongomock_motor import AsyncMongoMockClient
                 self.client = AsyncMongoMockClient()
                 self.db = self.client[MONGODB_DB]
@@ -202,6 +240,8 @@ class DatabaseManager:
             await self.db.password_resets.create_index("expires_at", expireAfterSeconds=0)
             await self.db.customer_login_attempts.create_index("email")
             await self.db.customer_login_attempts.create_index("expires_at", expireAfterSeconds=0)
+            await self.db.rate_limits.create_index("key", unique=True)
+            await self.db.rate_limits.create_index("expires_at", expireAfterSeconds=0)
         except Exception as e:
             logger.warning(f"Index creation notice: {e}")
 

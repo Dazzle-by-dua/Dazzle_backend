@@ -76,9 +76,10 @@ def test_admin_auth_success_and_failure():
     assert res_me.status_code == 200
     assert res_me.json()["email"] == TEST_ADMIN_EMAIL
 
-    # Logout
-    res_logout = client.post("/api/auth/logout")
+    # Logout (from legitimate frontend origin)
+    res_logout = client.post("/api/auth/logout", headers={"Origin": "https://dazzlebydua.com"})
     assert res_logout.status_code == 200
+    client.cookies.clear()
 
 # Helper to get admin headers
 def get_auth_headers():

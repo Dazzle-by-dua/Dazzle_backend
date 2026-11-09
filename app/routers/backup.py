@@ -1,5 +1,6 @@
 from typing import Dict, Any
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, status
+from app.config import IS_PRODUCTION
 from app.database import export_all_data, import_all_data, reset_all_data
 from app.security import get_current_admin
 
@@ -21,5 +22,10 @@ async def import_store_backup(payload: Dict[str, Any], admin: dict = Depends(get
 @router.post("/reset")
 async def reset_store_to_defaults(admin: dict = Depends(get_current_admin)):
     """Resets store data to default demo state, matching DazzleStore.resetAll()"""
+    if IS_PRODUCTION:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Database reset to factory demo state is strictly disabled in production environments."
+        )
     await reset_all_data()
     return {"success": True, "message": "Store successfully reset to initial factory demo state."}

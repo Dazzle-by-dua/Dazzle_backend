@@ -1,6 +1,11 @@
 import hmac
 import hashlib
 import datetime
+import base64
+import struct
+import time
+import secrets
+import urllib.parse
 from typing import Optional
 from fastapi import Depends, HTTPException, status, Header, Cookie
 from jose import JWTError, jwt
@@ -46,6 +51,77 @@ def get_password_hash(password: str) -> str:
 def hash_secret_hmac(value: str) -> str:
     """Generate server-side HMAC-SHA256 verifier for OTPs and tokens."""
     return hmac.new(SECRET_KEY.encode("utf-8"), value.encode("utf-8"), hashlib.sha256).hexdigest()
+
+def generate_totp_secret() -> str:
+    """Generate a random 32-character base32-encoded secret for TOTP (RFC 6238)."""
+    random_bytes = secrets.token_bytes(20)
+    return base64.b32encode(random_bytes).decode("ascii").replace("=", "")
+
+def get_totp_uri(username: str, secret: str, issuer: str = "Dazzle by Dua") -> str:
+    """Generate otpauth URI for standard authenticator app enrollment."""
+    safe_user = urllib.parse.quote(username)
+    safe_issuer = urllib.parse.quote(issuer)
+    return f"otpauth://totp/{safe_issuer}:{safe_user}?secret={secret}&issuer={safe_issuer}&algorithm=SHA1&digits=6&period=30"
+
+def _compute_totp(secret: str, time_step: int) -> str:
+    """Compute 6-digit TOTP code for a given 30-second time step."""
+    secret_clean = secret.strip().replace(" ", "").upper()
+    pad_len = (8 - len(secret_clean) % 8) % 8
+    key = base64.b32decode(secret_clean + "=" * pad_len, casefold=True)
+    msg = struct.pack(">Q", time_step)
+    digest = hmac.new(key, msg, hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    code_int = struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF
+    return f"{code_int % 1000000:06d}"
+
+def verify_totp_code(secret: str, code: str, window: int = 1) -> bool:
+    """
+    Verify RFC 6238 TOTP 6-digit code.
+    Checks current step and +/- window steps for clock drift.
+    """
+    if not secret or not code:
+        return False
+    code_clean = str(code).strip().replace(" ", "")
+    if len(code_clean) != 6 or not code_clean.isdigit():
+        return False
+
+    current_step = int(time.time() // 30)
+    for step_offset in range(-window, window + 1):
+        try:
+            expected = _compute_totp(secret, current_step + step_offset)
+            if secrets.compare_digest(expected, code_clean):
+                return True
+        except Exception:
+            pass
+    return False
+
+def generate_recovery_codes(count: int = 8) -> tuple[list[str], list[str]]:
+    """
+    Generate recovery codes.
+    Returns (plaintext_codes_for_user, hashed_codes_for_db).
+    """
+    plaintext = []
+    hashed = []
+    for _ in range(count):
+        raw = f"{secrets.token_hex(2).upper()}-{secrets.token_hex(2).upper()}"
+        plaintext.append(raw)
+        hashed.append(hash_secret_hmac(raw))
+    return plaintext, hashed
+
+def verify_and_consume_recovery_code(entered_code: str, hashed_codes: list[str]) -> tuple[bool, list[str]]:
+    """
+    Verify single-use recovery code. If matched, consume it and return updated list.
+    """
+    if not entered_code or not hashed_codes:
+        return False, hashed_codes
+    code_clean = entered_code.strip().upper().replace(" ", "")
+    entered_hash = hash_secret_hmac(code_clean)
+    for idx, stored_hash in enumerate(hashed_codes):
+        if secrets.compare_digest(entered_hash, stored_hash):
+            updated = list(hashed_codes)
+            updated.pop(idx)
+            return True, updated
+    return False, hashed_codes
 
 def create_access_token(data: dict, expires_delta: Optional[datetime.timedelta] = None) -> str:
     to_encode = data.copy()
@@ -103,6 +179,14 @@ async def get_current_admin(
     if not payload:
         raise credentials_exception
 
+    # Reject intermediate or single-purpose tokens (e.g. 2FA challenge tokens)
+    if payload.get("purpose"):
+        raise credentials_exception
+
+    # Strictly separate customer and admin privileges
+    if payload.get("role") == "customer":
+        raise credentials_exception
+
     username: str = payload.get("sub")
     if not username:
         raise credentials_exception
@@ -112,12 +196,23 @@ async def get_current_admin(
     if not admin:
         raise credentials_exception
 
+    # Check token version for immediate session revocation upon logout or password change
+    token_version = payload.get("token_version", 1)
+    current_token_version = admin.get("token_version", 1)
+    if token_version != current_token_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Admin session has been revoked. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     return {
         "id": admin.get("id", 1),
         "username": admin["username"],
         "email": admin["email"],
         "name": admin["name"],
-        "role": admin["role"]
+        "role": admin["role"],
+        "token_version": current_token_version
     }
 
 async def get_current_admin_optional(

@@ -1,3 +1,4 @@
+import re
 from typing import List
 from fastapi import APIRouter, HTTPException, Depends
 from app.database import get_database, clean_docs
@@ -33,7 +34,9 @@ async def get_customers(admin: dict = Depends(get_current_admin)):
 @router.get("/{email}")
 async def get_customer_details(email: str, admin: dict = Depends(get_current_admin)):
     db = get_database()
-    orders = await db.orders.find({"email": {"$regex": f"^{email}$", "$options": "i"}}).sort("created_at", -1).to_list(length=1000)
+    clean_email = email.strip()
+    escaped_email = re.escape(clean_email)
+    orders = await db.orders.find({"email": {"$regex": f"^{escaped_email}$", "$options": "i"}}).sort("created_at", -1).to_list(length=1000)
     if not orders:
         raise HTTPException(status_code=404, detail="Customer not found.")
 
