@@ -1,7 +1,6 @@
 import hmac
 import hashlib
 import json
-import uuid
 import pytest
 from unittest.mock import patch, MagicMock
 from starlette.testclient import TestClient
@@ -433,69 +432,3 @@ def test_razorpay_webhooks_flow_and_deduplication():
     # Confirm order remained Paid
     order_doc_after = client.get(f"/api/orders/{internal_id}").json()
     assert order_doc_after["paymentStatus"] == "Paid"
-
-
-# =========================================================================
-# 10. UPI Redirect Verification Without order_id (Gateway Query Callback)
-# =========================================================================
-def test_razorpay_upi_redirect_verification_without_order_id():
-    """
-    Verify that Razorpay signature verification succeeds when customer is redirected back
-    from a UPI app and only razorpay_order_id, razorpay_payment_id, and razorpay_signature
-    are available in the callback (order_id omitted).
-    """
-    uid = uuid.uuid4().hex[:6]
-    rzp_order_id = f"order_upi_redir_{uid}"
-    mock_rzp_order = {
-        "id": rzp_order_id,
-        "amount": 504000,
-        "currency": "INR",
-        "receipt": f"DBD-2026-UPI-{uid}",
-        "status": "created"
-    }
-
-    with patch("app.razorpay_service.is_razorpay_configured", return_value=True), \
-         patch("app.razorpay_service.get_razorpay_client") as mock_client:
-        mock_client.return_value.order.create.return_value = mock_rzp_order
-
-        c_res = client.post("/api/orders/razorpay/create-order", json={
-            "items": [{"id": 1, "qty": 1}],
-            "customer": "Sara UPI",
-            "email": f"sara_{uid}@example.com",
-            "city": "Hyderabad",
-            "state": "Telangana"
-        })
-        assert c_res.status_code == 200
-        internal_id = c_res.json()["order_id"]
-
-    valid_pay_id = f"pay_upi_{uid}"
-    valid_sig = compute_payment_signature(rzp_order_id, valid_pay_id)
-
-    mock_pay_details = {
-        "id": valid_pay_id,
-        "amount": 5040.0,
-        "currency": "INR",
-        "status": "captured",
-        "method": "upi"
-    }
-
-    # Verify payload has NO order_id (simulating UPI redirect with only URL query params)
-    redirect_payload = {
-        "razorpay_order_id": rzp_order_id,
-        "razorpay_payment_id": valid_pay_id,
-        "razorpay_signature": valid_sig
-    }
-
-    with patch("app.razorpay_service.is_razorpay_configured", return_value=True), \
-         patch("app.routers.orders.fetch_payment_details", return_value=mock_pay_details):
-
-        res_verify = client.post("/api/orders/razorpay/verify", json=redirect_payload)
-        assert res_verify.status_code == 200
-        data = res_verify.json()
-        assert data["success"] is True
-        assert data["order"]["id"] == internal_id
-        assert data["order"]["paymentStatus"] == "Paid"
-        assert data["order"]["paymentMethod"] == "Razorpay (UPI)"
-        assert data["order"]["status"] == "Processing"
-        assert data["order"]["razorpay_payment_id"] == valid_pay_id
-

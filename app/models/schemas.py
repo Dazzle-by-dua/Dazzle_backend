@@ -312,13 +312,13 @@ class RazorpayOrderCreateRequest(BaseModel):
     coupon_code: Optional[str] = None
 
 class RazorpayPaymentVerifyRequest(BaseModel):
-    order_id: Optional[str] = None
+    order_id: str
     razorpay_order_id: str
     razorpay_payment_id: str
     razorpay_signature: str
 
 class RazorpayPaymentFailedRequest(BaseModel):
-    order_id: Optional[str] = None
+    order_id: str
     razorpay_order_id: Optional[str] = None
     razorpay_payment_id: Optional[str] = None
     error_code: Optional[str] = None

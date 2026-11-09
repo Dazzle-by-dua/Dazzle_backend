@@ -342,10 +342,8 @@ async def verify_razorpay_payment_endpoint(payload: RazorpayPaymentVerifyRequest
 
     # 2. Find order in MongoDB
     db = get_database()
-    order = None
-    if payload.order_id:
-        order = await db.orders.find_one({"id": payload.order_id})
-    if not order and payload.razorpay_order_id:
+    order = await db.orders.find_one({"id": payload.order_id})
+    if not order:
         order = await db.orders.find_one({"razorpay_order_id": payload.razorpay_order_id})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
@@ -434,9 +432,7 @@ async def record_payment_failure_endpoint(
     Requires admin privileges, matching customer account, or matching Razorpay order ID.
     """
     db = get_database()
-    order = None
-    if payload.order_id:
-        order = await db.orders.find_one({"id": payload.order_id})
+    order = await db.orders.find_one({"id": payload.order_id})
     if not order and payload.razorpay_order_id:
         order = await db.orders.find_one({"razorpay_order_id": payload.razorpay_order_id})
 
@@ -485,7 +481,7 @@ async def record_payment_failure_endpoint(
     return {
         "success": True,
         "message": "Payment failure recorded.",
-        "order_id": order["id"]
+        "order_id": payload.order_id
     }
 
 @router.get("/{order_id}/payment-status")
