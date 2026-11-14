@@ -134,6 +134,12 @@ async def calculate_trusted_order_total(
         coupon = await db.coupons.find_one({"code": code_clean, "active": True})
         if not coupon:
             coupon = await db.offers.find_one({"code": code_clean})
+        if not coupon:
+            from app.seed_data import DEFAULT_OFFERS
+            for def_c in DEFAULT_OFFERS.get("coupons", []):
+                if def_c.get("code") == code_clean and def_c.get("active", True):
+                    coupon = def_c
+                    break
         # Canonical fallback for built-in FREEDEL coupon
         if not coupon and code_clean == "FREEDEL":
             coupon = {
@@ -314,7 +320,12 @@ async def create_razorpay_order_endpoint(
         "amount": rzp_res["amount"],
         "currency": rzp_res.get("currency", "INR"),
         "key_id": RAZORPAY_KEY_ID,
-        "status": rzp_res.get("status", "created")
+        "status": rzp_res.get("status", "created"),
+        "total": trusted_total,
+        "subtotal": subtotal,
+        "discount": discount,
+        "final_delivery_charge": shipping_fee,
+        "coupon_code": coupon_meta["coupon_code"]
     }
 
 

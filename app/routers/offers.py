@@ -108,6 +108,14 @@ async def validate_coupon(payload: ValidateCouponRequest):
     code_clean = (payload.code or "").strip().upper()
     db = get_database()
     row = await db.coupons.find_one({"code": code_clean, "active": True})
+    if not row:
+        row = await db.offers.find_one({"code": code_clean, "active": True})
+    if not row:
+        from app.seed_data import DEFAULT_OFFERS
+        for def_c in DEFAULT_OFFERS.get("coupons", []):
+            if def_c.get("code") == code_clean and def_c.get("active", True):
+                row = def_c
+                break
 
     # Canonical fallback for built-in FREEDEL coupon
     if not row and code_clean == "FREEDEL":
