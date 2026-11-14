@@ -101,6 +101,12 @@ def generate_order_email_content(order: Dict[str, Any]) -> Dict[str, str]:
     safe_payment_status = html.escape(str(order.get("paymentStatus") or "Pending"))
     safe_order_status = html.escape(str(order.get("status") or "Processing"))
     safe_currency = html.escape(str(order.get("currency") or "INR"))
+    safe_razorpay_payment_id = html.escape(str(order.get("razorpay_payment_id") or "").strip())
+    rzp_payment_id_html = f"""<tr>
+                        <td style="color: #777;">Razorpay Payment ID:</td>
+                        <td style="color: #1A1A1A; font-weight: 600; font-family: monospace;">{safe_razorpay_payment_id}</td>
+                      </tr>""" if safe_razorpay_payment_id else ""
+    rzp_payment_id_text = f"Razorpay Payment ID: {safe_razorpay_payment_id}\n" if safe_razorpay_payment_id else ""
 
     formatted_time = format_order_datetime(order.get("created_at") or order.get("date"))
 
@@ -284,6 +290,7 @@ def generate_order_email_content(order: Dict[str, Any]) -> Dict[str, str]:
                         <td style="color: #777;">Payment Status:</td>
                         <td style="color: #1A1A1A; font-weight: 600;">{safe_payment_status}</td>
                       </tr>
+                      {rzp_payment_id_html}
                       <tr>
                         <td style="color: #777;">Order Status:</td>
                         <td style="color: #1A1A1A;">{safe_order_status}</td>
@@ -378,7 +385,7 @@ Order Date: {formatted_time}
 Order Status: {safe_order_status}
 Payment Method: {safe_payment_method}
 Payment Status: {safe_payment_status}
-
+{rzp_payment_id_text}
 1. CUSTOMER & SHIPPING DETAILS
 -------------------------------------------------------------------
 Name:    {order.get('customer', 'Valued Customer')}
@@ -429,6 +436,22 @@ async def send_new_order_admin_notification(order: Dict[str, Any], db=None) -> D
     if not order_id:
         logger.warning("Attempted to send order notification for order without an ID.")
         return {"status": "error", "reason": "missing_order_id"}
+
+    # Guard: Online Razorpay orders MUST be verified and Paid before sending admin confirmation email!
+    pay_method = str(order.get("paymentMethod") or "").strip().lower()
+    pay_status = str(order.get("paymentStatus") or order.get("payment_status") or "").strip().lower()
+    is_online_order = bool(
+        order.get("razorpay_order_id")
+        or order.get("razorpay_payment_id")
+        or any(k in pay_method for k in ("razorpay", "upi", "online", "card", "netbanking"))
+    )
+    if is_online_order and pay_status != "paid":
+        logger.warning(
+            f"Rejecting premature admin email for Order #{order_id}: "
+            f"paymentMethod='{pay_method}', paymentStatus='{pay_status}'. "
+            f"Admin order confirmation is only permitted after online payment is verified as Paid."
+        )
+        return {"status": "skipped", "reason": "payment_not_paid"}
 
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 

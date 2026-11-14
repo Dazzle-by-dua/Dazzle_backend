@@ -194,6 +194,62 @@ async def calculate_trusted_order_total(
     return total, subtotal, discount, verified_items, final_shipping_fee, delivery_info, coupon_meta
 
 
+async def reduce_order_inventory(order: dict, db) -> bool:
+    """
+    Atomically deduct inventory for items in a verified paid order.
+    Ensures stock is reduced exactly once per order (idempotent flag: inventory_deducted).
+    """
+    if not order or not db:
+        return False
+
+    order_id = order.get("id")
+    if not order_id:
+        return False
+
+    res = await db.orders.update_one(
+        {"id": order_id, "inventory_deducted": {"$ne": True}},
+        {
+            "$set": {
+                "inventory_deducted": True,
+                "inventory_deducted_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+            }
+        }
+    )
+    if res.modified_count == 0:
+        logger.info(f"Inventory already deducted for Order #{order_id}. Skipping.")
+        return False
+
+    items = order.get("items") or []
+    for it in items:
+        pid = it.get("id")
+        qty = int(it.get("qty", 1) or 1)
+        if pid is not None:
+            prod_query = {"id": pid}
+            try:
+                prod_query = {"$or": [{"id": int(pid)}, {"id": str(pid)}]}
+            except (ValueError, TypeError):
+                pass
+
+            p = await db.products.find_one(prod_query)
+            if p:
+                if "stock" in p and isinstance(p["stock"], (int, float)):
+                    new_stock = max(0, int(p["stock"]) - qty)
+                    await db.products.update_one(
+                        {"_id": p["_id"]},
+                        {"$set": {"stock": new_stock, "inStock": new_stock > 0}}
+                    )
+                    logger.info(f"Reduced stock for product {pid}: {p['stock']} -> {new_stock}")
+                elif "stock_quantity" in p and isinstance(p["stock_quantity"], (int, float)):
+                    new_stock = max(0, int(p["stock_quantity"]) - qty)
+                    await db.products.update_one(
+                        {"_id": p["_id"]},
+                        {"$set": {"stock_quantity": new_stock, "inStock": new_stock > 0}}
+                    )
+                    logger.info(f"Reduced stock_quantity for product {pid}: {p['stock_quantity']} -> {new_stock}")
+
+    return True
+
+
 # ========================================================
 # Delivery & Razorpay Endpoints (Declared before /{order_id})
 # ========================================================
@@ -305,16 +361,9 @@ async def create_razorpay_order_endpoint(
     }
     await db.orders.insert_one(doc)
 
-    # Notify admin of new order creation (pre‑payment).
-    try:
-        from app.resend_service import send_new_order_admin_notification
-        # Fire‑and‑forget – we don’t block order creation on email success.
-        # Errors are logged inside the helper.
-        asyncio.create_task(send_new_order_admin_notification(doc, db))
-    except Exception as e:
-        logger.warning(f"Failed to trigger admin order email after creation for Order #{order_id}: {e}")
-    # Return Razorpay order details for the frontend (always)
+    # Return Razorpay order details for the frontend (do NOT send admin email until payment is verified)
     return {
+        "success": True,
         "order_id": order_id,
         "razorpay_order_id": rzp_res["razorpay_order_id"],
         "amount": rzp_res["amount"],
@@ -324,7 +373,11 @@ async def create_razorpay_order_endpoint(
         "total": trusted_total,
         "subtotal": subtotal,
         "discount": discount,
+        "shipping_fee": shipping_fee,
+        "delivery_fee": shipping_fee,
+        "original_delivery_charge": coupon_meta["original_delivery_charge"],
         "final_delivery_charge": shipping_fee,
+        "delivery_discount": coupon_meta["delivery_discount"],
         "coupon_code": coupon_meta["coupon_code"]
     }
 
@@ -417,6 +470,13 @@ async def verify_razorpay_payment_endpoint(payload: RazorpayPaymentVerifyRequest
     )
 
     updated_order = await db.orders.find_one({"id": order["id"]})
+
+    # Reduce product stock exactly once
+    try:
+        await reduce_order_inventory(updated_order, db)
+    except Exception as stock_err:
+        logger.warning(f"Failed to deduct inventory for verified Order #{order['id']}: {stock_err}")
+
     try:
         from app.resend_service import send_new_order_admin_notification
         await send_new_order_admin_notification(updated_order, db)

@@ -78,6 +78,22 @@ async def handle_razorpay_webhook(
             order = await db.orders.find_one({"razorpay_order_id": rzp_order_id})
 
         if order:
+            # Validate payment amount & currency if entity present
+            if payment_entity:
+                amount_paise = payment_entity.get("amount")
+                if amount_paise is not None:
+                    paid_in_rupees = float(amount_paise) / 100.0
+                    expected_total = float(order.get("total", 0.0))
+                    expected_subtotal = float(order.get("subtotal", expected_total))
+                    if abs(expected_total - paid_in_rupees) > 0.05 and abs(expected_subtotal - paid_in_rupees) > 0.05:
+                        logger.error(f"Webhook amount mismatch for order {order['id']}: expected {expected_total} (subtotal {expected_subtotal}), got {paid_in_rupees}")
+                        return {"status": "error", "message": "Amount mismatch"}
+
+                currency = payment_entity.get("currency")
+                if currency and currency.upper() != "INR":
+                    logger.error(f"Webhook currency mismatch for order {order['id']}: {currency}")
+                    return {"status": "error", "message": "Currency mismatch"}
+
             # Prevent duplicate confirmation
             if order.get("paymentStatus") == "Paid":
                 logger.info(f"Order {order['id']} is already marked as Paid.")
@@ -109,6 +125,14 @@ async def handle_razorpay_webhook(
                 )
                 logger.info(f"Order {order['id']} successfully updated to Paid & Processing via webhook {event_name}.")
                 updated_order = await db.orders.find_one({"id": order["id"]})
+
+                # Reduce product stock exactly once
+                try:
+                    from app.routers.orders import reduce_order_inventory
+                    await reduce_order_inventory(updated_order, db)
+                except Exception as stock_err:
+                    logger.warning(f"Failed to deduct inventory via webhook for Order #{order['id']}: {stock_err}")
+
                 try:
                     from app.resend_service import send_new_order_admin_notification
                     await send_new_order_admin_notification(updated_order, db)
