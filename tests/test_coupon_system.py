@@ -392,3 +392,208 @@ def test_normal_order_without_coupon_pays_full_delivery():
     assert order["delivery_fee"] == 50.0
     # Total is 4990 + 50 = 5040
     assert order["total"] == 5040.0
+
+
+# =========================================================================
+# 5. Public Coupons Listing, Max Discount, Expiry & Usage Limit Tests
+# =========================================================================
+
+def test_public_coupons_endpoint_returns_only_active():
+    """GET /api/offers/coupons/public returns only active, safe coupons and includes FREEDEL."""
+    db = get_database()
+    asyncio.run(db.coupons.insert_one({
+        "id": "c_active_test",
+        "code": "TESTACTIVE",
+        "title": "Active Promo",
+        "discount": 15.0,
+        "type": "percent",
+        "minOrder": 500.0,
+        "active": True
+    }))
+    asyncio.run(db.coupons.insert_one({
+        "id": "c_inactive_test",
+        "code": "TESTINACTIVE",
+        "title": "Disabled Promo",
+        "discount": 50.0,
+        "type": "percent",
+        "minOrder": 0.0,
+        "active": False
+    }))
+
+    resp = client.get("/api/offers/coupons/public")
+    assert resp.status_code == 200
+    coupons = resp.json()
+    assert isinstance(coupons, list)
+
+    codes = [c["code"] for c in coupons]
+    assert "TESTACTIVE" in codes
+    assert "FREEDEL" in codes
+    assert "TESTINACTIVE" not in codes
+
+
+def test_coupon_max_discount_cap_validation_and_order():
+    """Ensure maxDiscount caps percent discounts during validation and order creation."""
+    db = get_database()
+    asyncio.run(db.coupons.update_one(
+        {"code": "CAPPED20"},
+        {"$set": {
+            "id": "c_capped20",
+            "code": "CAPPED20",
+            "title": "20% off up to 200",
+            "discount": 20.0,
+            "type": "percent",
+            "minOrder": 500.0,
+            "maxDiscount": 200.0,
+            "active": True
+        }},
+        upsert=True
+    ))
+
+    # Validate with 3000 subtotal (20% would be 600, capped at 200)
+    resp = client.post("/api/offers/coupons/validate", json={
+        "code": "CAPPED20",
+        "orderTotal": 3000.0,
+        "city": "Hyderabad",
+        "state": "Telangana"
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["valid"] is True
+    assert data["discountAmount"] == 200.0
+
+    # COD order with CAPPED20
+    payload = {
+        "customer": "Capped Tester",
+        "email": "capped@example.com",
+        "phone": "+91 9876543210",
+        "address": "Banjara Hills",
+        "landmark": "Near Mall",
+        "city": "Hyderabad",
+        "state": "Telangana",
+        "postal_code": "500034",
+        "coupon_code": "CAPPED20",
+        "total": 4840.0,
+        "items": [
+            {
+                "id": 1,
+                "name": "Moissanite Solitaire Ring",
+                "price": 2499.0,
+                "qty": 1
+            }
+        ]
+    }
+    order_resp = client.post("/api/orders", json=payload)
+    assert order_resp.status_code == 201
+    order_data = order_resp.json()
+    # Subtotal 4990, 20% = 998, capped at 200 discount. Delivery = 50. Total = 4990 - 200 + 50 = 4840.
+    assert order_data["discount"] == 200.0
+    assert order_data["total"] == 4840.0
+
+
+def test_coupon_expiry_and_future_valid_from():
+    """Coupons with past expiry or future validFrom are rejected."""
+    db = get_database()
+    asyncio.run(db.coupons.update_one(
+        {"code": "PASTEXP"},
+        {"$set": {
+            "id": "c_pastexp",
+            "code": "PASTEXP",
+            "title": "Expired Promo",
+            "discount": 10.0,
+            "type": "percent",
+            "expiry": "2020-01-01",
+            "active": True
+        }},
+        upsert=True
+    ))
+    asyncio.run(db.coupons.update_one(
+        {"code": "FUTUREFROM"},
+        {"$set": {
+            "id": "c_futurefrom",
+            "code": "FUTUREFROM",
+            "title": "Future Promo",
+            "discount": 10.0,
+            "type": "percent",
+            "validFrom": "2030-01-01",
+            "active": True
+        }},
+        upsert=True
+    ))
+
+    # Expired
+    resp_exp = client.post("/api/offers/coupons/validate", json={
+        "code": "PASTEXP",
+        "orderTotal": 1000.0
+    })
+    assert resp_exp.status_code == 200
+    assert resp_exp.json()["valid"] is False
+    assert "expired" in resp_exp.json()["message"].lower()
+
+    # Future start
+    resp_fut = client.post("/api/offers/coupons/validate", json={
+        "code": "FUTUREFROM",
+        "orderTotal": 1000.0
+    })
+    assert resp_fut.status_code == 200
+    assert resp_fut.json()["valid"] is False
+    assert "not active yet" in resp_fut.json()["message"].lower()
+
+
+def test_coupon_usage_limit_and_increment():
+    """Coupons with usageLimit reject after usedCount reaches usageLimit, and COD placement increments usedCount."""
+    db = get_database()
+    asyncio.run(db.coupons.update_one(
+        {"code": "LIMITED1"},
+        {"$set": {
+            "id": "c_limited1",
+            "code": "LIMITED1",
+            "title": "One-time code",
+            "discount": 100.0,
+            "type": "fixed",
+            "usageLimit": 1,
+            "usedCount": 0,
+            "active": True
+        }},
+        upsert=True
+    ))
+
+    # Place COD order with LIMITED1
+    payload = {
+        "customer": "Limit Tester",
+        "email": "limit@example.com",
+        "phone": "+91 9876543210",
+        "address": "Banjara Hills",
+        "city": "Hyderabad",
+        "state": "Telangana",
+        "postal_code": "500034",
+        "coupon_code": "LIMITED1",
+        "total": 4940.0,
+        "items": [
+            {
+                "id": 1,
+                "name": "Moissanite Solitaire Ring",
+                "price": 2499.0,
+                "qty": 1
+            }
+        ]
+    }
+    resp1 = client.post("/api/orders", json=payload)
+    assert resp1.status_code == 201
+
+    # Check coupon usedCount incremented to 1
+    updated_c = asyncio.run(db.coupons.find_one({"code": "LIMITED1"}))
+    assert updated_c["usedCount"] == 1
+
+    # Trying to use LIMITED1 again should be rejected
+    resp2 = client.post("/api/offers/coupons/validate", json={
+        "code": "LIMITED1",
+        "orderTotal": 1000.0
+    })
+    assert resp2.status_code == 200
+    assert resp2.json()["valid"] is False
+    assert "usage limit has been reached" in resp2.json()["message"].lower()
+
+    # Placing second order should be rejected
+    resp3 = client.post("/api/orders", json=payload)
+    assert resp3.status_code == 400
+    assert "usage limit" in resp3.json()["detail"].lower()

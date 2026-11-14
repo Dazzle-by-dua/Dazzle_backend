@@ -135,9 +135,15 @@ class CouponBase(BaseModel):
     code: str
     title: str
     discount: float
-    type: str = "percent"  # 'percent', 'fixed', 'free_shipping'
+    type: str = "percent"  # 'percent', 'fixed', 'free_shipping', 'free_delivery'
     minOrder: Optional[float] = 0
+    maxDiscount: Optional[float] = None
     expiry: Optional[str] = "2026-12-31"
+    validFrom: Optional[str] = None
+    usageLimit: Optional[int] = None
+    usedCount: Optional[int] = 0
+    applicableCategories: Optional[List[str]] = None
+    applicableProducts: Optional[List[Union[int, str]]] = None
     desc: Optional[str] = None
     badge: Optional[str] = None
     active: Optional[bool] = True
@@ -151,7 +157,13 @@ class CouponUpdate(BaseModel):
     discount: Optional[float] = None
     type: Optional[str] = None
     minOrder: Optional[float] = None
+    maxDiscount: Optional[float] = None
     expiry: Optional[str] = None
+    validFrom: Optional[str] = None
+    usageLimit: Optional[int] = None
+    usedCount: Optional[int] = None
+    applicableCategories: Optional[List[str]] = None
+    applicableProducts: Optional[List[Union[int, str]]] = None
     desc: Optional[str] = None
     badge: Optional[str] = None
     active: Optional[bool] = None
@@ -192,6 +204,7 @@ class ValidateCouponRequest(BaseModel):
     city: Optional[str] = None
     state: Optional[str] = None
     address: Optional[str] = None
+    items: Optional[List[dict]] = None
 
 class ValidateCouponResponse(BaseModel):
     valid: bool
@@ -200,6 +213,7 @@ class ValidateCouponResponse(BaseModel):
     deliveryDiscount: float = 0.0
     discountType: Optional[str] = None
     freeShipping: bool = False
+    maxDiscount: Optional[float] = None
     coupon: Optional[CouponOut] = None
 
 # ========================================================

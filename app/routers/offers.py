@@ -1,6 +1,7 @@
 import random
-from typing import List
-from fastapi import APIRouter, HTTPException, Depends
+import datetime
+from typing import List, Optional
+from fastapi import APIRouter, HTTPException, Depends, Query
 from app.database import get_database, clean_doc, clean_docs
 from app.models.schemas import (
     OffersOut,
@@ -44,12 +45,78 @@ async def update_all_offers(payload: dict, admin: dict = Depends(get_current_adm
     return {"coupons": clean_docs(fresh_coupons), "combos": clean_docs(fresh_combos)}
 
 
+def is_coupon_expired(expiry_str: Optional[str]) -> bool:
+    """Check if coupon expiry date is in the past."""
+    if not expiry_str or not str(expiry_str).strip():
+        return False
+    try:
+        s = str(expiry_str).strip()[:10]
+        exp_date = datetime.date.fromisoformat(s)
+        return exp_date < datetime.date.today()
+    except Exception:
+        return False
+
+
+def is_coupon_not_yet_active(valid_from_str: Optional[str]) -> bool:
+    """Check if coupon start date is in the future."""
+    if not valid_from_str or not str(valid_from_str).strip():
+        return False
+    try:
+        s = str(valid_from_str).strip()[:10]
+        vf_date = datetime.date.fromisoformat(s)
+        return vf_date > datetime.date.today()
+    except Exception:
+        return False
+
+
 # Coupons Endpoints
 @router.get("/coupons", response_model=List[CouponOut])
-async def get_coupons():
+async def get_coupons(active_only: bool = Query(False)):
     db = get_database()
-    coupons = await db.coupons.find({}).to_list(length=100)
+    query = {"active": True} if active_only else {}
+    coupons = await db.coupons.find(query).to_list(length=100)
+    if not coupons:
+        from app.seed_data import DEFAULT_OFFERS
+        defaults = DEFAULT_OFFERS.get("coupons", [])
+        if active_only:
+            defaults = [c for c in defaults if c.get("active", True)]
+        return defaults
     return clean_docs(coupons)
+
+
+@router.get("/coupons/public", response_model=List[CouponOut])
+@router.get("/coupons/available", response_model=List[CouponOut])
+async def get_public_available_coupons():
+    """
+    Public customer-facing endpoint: returns all active, published coupons.
+    Safe for storefront display; does not expose administrative actions.
+    """
+    db = get_database()
+    coupons = await db.coupons.find({"active": True}).to_list(length=100)
+    if not coupons:
+        from app.seed_data import DEFAULT_OFFERS
+        coupons = [c for c in DEFAULT_OFFERS.get("coupons", []) if c.get("active", True)]
+    else:
+        coupons = clean_docs(coupons)
+
+    # Ensure canonical FREEDEL is included if active
+    existing_codes = {c.get("code", "").upper() for c in coupons}
+    if "FREEDEL" not in existing_codes:
+        coupons.append({
+            "id": "c_freedel",
+            "code": "FREEDEL",
+            "title": "Free Delivery",
+            "discount": 0.0,
+            "type": "free_delivery",
+            "minOrder": 0.0,
+            "expiry": "2030-12-31",
+            "desc": "Enjoy 100% complimentary delivery on your entire order.",
+            "badge": "Free Delivery",
+            "active": True
+        })
+
+    return coupons
+
 
 @router.post("/coupons", response_model=CouponOut, status_code=201)
 async def add_coupon(payload: CouponCreate, admin: dict = Depends(get_current_admin)):
@@ -68,13 +135,20 @@ async def add_coupon(payload: CouponCreate, admin: dict = Depends(get_current_ad
         "discount": float(payload.discount),
         "type": payload.type or "percent",
         "minOrder": float(payload.minOrder or 0),
+        "maxDiscount": float(payload.maxDiscount) if payload.maxDiscount is not None else None,
         "expiry": payload.expiry or "2026-12-31",
+        "validFrom": payload.validFrom,
+        "usageLimit": int(payload.usageLimit) if payload.usageLimit is not None else None,
+        "usedCount": int(payload.usedCount or 0),
+        "applicableCategories": payload.applicableCategories or [],
+        "applicableProducts": payload.applicableProducts or [],
         "desc": payload.desc,
         "badge": payload.badge,
         "active": bool(payload.active)
     }
     await db.coupons.insert_one(doc)
     return clean_doc(doc)
+
 
 @router.put("/coupons/{coupon_id}", response_model=CouponOut)
 async def update_coupon(coupon_id: str, payload: CouponUpdate, admin: dict = Depends(get_current_admin)):
@@ -93,6 +167,7 @@ async def update_coupon(coupon_id: str, payload: CouponUpdate, admin: dict = Dep
     updated = await db.coupons.find_one({"id": coupon_id})
     return clean_doc(updated)
 
+
 @router.delete("/coupons/{coupon_id}")
 async def delete_coupon(coupon_id: str, admin: dict = Depends(get_current_admin)):
     db = get_database()
@@ -103,17 +178,18 @@ async def delete_coupon(coupon_id: str, admin: dict = Depends(get_current_admin)
     await db.coupons.delete_one({"id": coupon_id})
     return {"success": True, "message": f"Coupon {coupon_id} deleted."}
 
+
 @router.post("/coupons/validate", response_model=ValidateCouponResponse)
 async def validate_coupon(payload: ValidateCouponRequest):
     code_clean = (payload.code or "").strip().upper()
     db = get_database()
-    row = await db.coupons.find_one({"code": code_clean, "active": True})
+    row = await db.coupons.find_one({"code": code_clean})
     if not row:
-        row = await db.offers.find_one({"code": code_clean, "active": True})
+        row = await db.offers.find_one({"code": code_clean})
     if not row:
         from app.seed_data import DEFAULT_OFFERS
         for def_c in DEFAULT_OFFERS.get("coupons", []):
-            if def_c.get("code") == code_clean and def_c.get("active", True):
+            if def_c.get("code") == code_clean:
                 row = def_c
                 break
 
@@ -143,20 +219,99 @@ async def validate_coupon(payload: ValidateCouponRequest):
 
     coupon = clean_doc(row)
 
-    min_order = float(coupon.get("minOrder", 0) or 0)
-    if payload.orderTotal < min_order:
+    # 1. Active check
+    if not coupon.get("active", True):
         return {
             "valid": False,
-            "message": f"Order total must be at least ₹{min_order:,.0f} to apply code '{code_clean}'.",
+            "message": f"Coupon code '{code_clean}' is currently inactive or disabled.",
             "discountAmount": 0.0,
             "deliveryDiscount": 0.0,
             "freeShipping": False,
             "coupon": coupon
         }
 
+    # 2. Expiry check
+    if is_coupon_expired(coupon.get("expiry")):
+        return {
+            "valid": False,
+            "message": f"Coupon code '{code_clean}' expired on {coupon.get('expiry')}.",
+            "discountAmount": 0.0,
+            "deliveryDiscount": 0.0,
+            "freeShipping": False,
+            "coupon": coupon
+        }
+
+    # 3. Valid from (start date) check
+    if is_coupon_not_yet_active(coupon.get("validFrom")):
+        return {
+            "valid": False,
+            "message": f"Coupon code '{code_clean}' is not active yet. Valid from {coupon.get('validFrom')}.",
+            "discountAmount": 0.0,
+            "deliveryDiscount": 0.0,
+            "freeShipping": False,
+            "coupon": coupon
+        }
+
+    # 4. Usage limit check
+    usage_limit = coupon.get("usageLimit")
+    used_count = coupon.get("usedCount", 0) or 0
+    if usage_limit is not None and int(used_count) >= int(usage_limit):
+        return {
+            "valid": False,
+            "message": f"Coupon code '{code_clean}' usage limit has been reached.",
+            "discountAmount": 0.0,
+            "deliveryDiscount": 0.0,
+            "freeShipping": False,
+            "coupon": coupon
+        }
+
+    # 5. Minimum order requirement
+    min_order = float(coupon.get("minOrder", 0) or 0)
+    if payload.orderTotal < min_order:
+        shortfall = min_order - payload.orderTotal
+        return {
+            "valid": False,
+            "message": f"Order total must be at least ₹{min_order:,.0f} to apply code '{code_clean}'. (Add ₹{shortfall:,.0f} more to qualify)",
+            "discountAmount": 0.0,
+            "deliveryDiscount": 0.0,
+            "freeShipping": False,
+            "coupon": coupon
+        }
+
+    # 6. Category / Product restrictions (if items provided)
+    if payload.items and len(payload.items) > 0:
+        req_cats = [c.strip().lower() for c in (coupon.get("applicableCategories") or []) if str(c).strip()]
+        if req_cats:
+            item_cats = [str(it.get("category", "")).strip().lower() for it in payload.items if it.get("category")]
+            if not any(c in req_cats for c in item_cats):
+                return {
+                    "valid": False,
+                    "message": f"Coupon code '{code_clean}' is only valid on categories: {', '.join(coupon['applicableCategories'])}.",
+                    "discountAmount": 0.0,
+                    "deliveryDiscount": 0.0,
+                    "freeShipping": False,
+                    "coupon": coupon
+                }
+
+        req_prods = [str(p).strip().lower() for p in (coupon.get("applicableProducts") or []) if str(p).strip()]
+        if req_prods:
+            item_ids = [str(it.get("id", "")).strip().lower() for it in payload.items]
+            item_names = [str(it.get("name", "")).strip().lower() for it in payload.items]
+            if not any(p in item_ids or p in item_names for p in req_prods):
+                return {
+                    "valid": False,
+                    "message": f"Coupon code '{code_clean}' is only valid for selected jewellery pieces.",
+                    "discountAmount": 0.0,
+                    "deliveryDiscount": 0.0,
+                    "freeShipping": False,
+                    "coupon": coupon
+                }
+
+    # 7. Discount calculation with optional maximum discount cap
     discount_amount = 0.0
     delivery_discount = 0.0
     free_shipping = False
+    max_discount = float(coupon["maxDiscount"]) if coupon.get("maxDiscount") is not None else None
 
     ctype = coupon.get("type", "percent")
     if ctype in ["free_delivery", "free_shipping"] or code_clean == "FREEDEL":
@@ -177,20 +332,36 @@ async def validate_coupon(payload: ValidateCouponRequest):
             "deliveryDiscount": delivery_discount,
             "discountType": ctype,
             "freeShipping": True,
+            "maxDiscount": max_discount,
             "coupon": coupon
         }
     elif ctype == "percent":
-        discount_amount = round(payload.orderTotal * (float(coupon.get("discount", 0)) / 100.0), 2)
+        raw_discount = round(payload.orderTotal * (float(coupon.get("discount", 0)) / 100.0), 2)
+        if max_discount is not None and max_discount > 0 and raw_discount > max_discount:
+            discount_amount = max_discount
+            success_msg = f"Coupon '{coupon['code']}' applied! {coupon.get('discount'):g}% off capped at ₹{discount_amount:,.0f}."
+        else:
+            discount_amount = raw_discount
+            success_msg = f"Coupon '{coupon['code']}' applied successfully! You saved ₹{discount_amount:,.0f}."
     elif ctype == "fixed":
-        discount_amount = min(payload.orderTotal, float(coupon.get("discount", 0)))
+        raw_discount = min(payload.orderTotal, float(coupon.get("discount", 0)))
+        if max_discount is not None and max_discount > 0 and raw_discount > max_discount:
+            discount_amount = max_discount
+        else:
+            discount_amount = raw_discount
+        success_msg = f"Coupon '{coupon['code']}' applied successfully! You saved ₹{discount_amount:,.0f}."
+    else:
+        discount_amount = 0.0
+        success_msg = f"Coupon '{coupon['code']}' applied successfully!"
 
     return {
         "valid": True,
-        "message": f"Coupon '{coupon['code']}' applied successfully!",
+        "message": success_msg,
         "discountAmount": discount_amount,
         "deliveryDiscount": 0.0,
         "discountType": ctype,
         "freeShipping": free_shipping,
+        "maxDiscount": max_discount,
         "coupon": coupon
     }
 

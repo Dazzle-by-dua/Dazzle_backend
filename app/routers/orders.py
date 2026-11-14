@@ -158,26 +158,78 @@ async def calculate_trusted_order_total(
                 detail=f"Invalid or expired coupon code '{code_clean}'."
             )
 
-        min_order = float(coupon.get("minOrder", 0) or 0)
-        if subtotal < min_order:
+        from app.routers.offers import is_coupon_expired, is_coupon_not_yet_active
+        if is_coupon_expired(coupon.get("expiry")):
             raise HTTPException(
                 status_code=400,
-                detail=f"Order subtotal must be at least ₹{min_order:,.0f} to apply coupon '{code_clean}'."
+                detail=f"Coupon code '{code_clean}' expired on {coupon.get('expiry')}."
             )
+
+        if is_coupon_not_yet_active(coupon.get("validFrom")):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Coupon code '{code_clean}' is not active yet. Valid from {coupon.get('validFrom')}."
+            )
+
+        usage_limit = coupon.get("usageLimit")
+        used_count = coupon.get("usedCount", 0) or 0
+        if usage_limit is not None and int(used_count) >= int(usage_limit):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Coupon code '{code_clean}' usage limit has been reached."
+            )
+
+        min_order = float(coupon.get("minOrder", 0) or 0)
+        if subtotal < min_order:
+            shortfall = min_order - subtotal
+            raise HTTPException(
+                status_code=400,
+                detail=f"Order subtotal must be at least ₹{min_order:,.0f} to apply coupon '{code_clean}'. (Add ₹{shortfall:,.0f} more)"
+            )
+
+        # Category and Product restrictions
+        req_cats = [c.strip().lower() for c in (coupon.get("applicableCategories") or []) if str(c).strip()]
+        if req_cats:
+            item_cats = [str(it.get("category", "")).strip().lower() for it in verified_items if it.get("category")]
+            if not any(c in req_cats for c in item_cats):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Coupon code '{code_clean}' is only valid on categories: {', '.join(coupon['applicableCategories'])}."
+                )
+
+        req_prods = [str(p).strip().lower() for p in (coupon.get("applicableProducts") or []) if str(p).strip()]
+        if req_prods:
+            item_ids = [str(it.get("id", "")).strip().lower() for it in verified_items]
+            item_names = [str(it.get("name", "")).strip().lower() for it in verified_items]
+            if not any(p in item_ids or p in item_names for p in req_prods):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Coupon code '{code_clean}' is only valid on selected products."
+                )
 
         applied_coupon_code = coupon.get("code", code_clean).upper()
         ctype = coupon.get("type", "percent")
+        max_discount = float(coupon["maxDiscount"]) if coupon.get("maxDiscount") is not None else None
+
         if ctype in ["free_delivery", "free_shipping"] or applied_coupon_code == "FREEDEL":
             # 100% discount on delivery fee only; product subtotal remains untouched
             discount = 0.0
             delivery_discount = original_shipping_fee
         elif ctype == "percent":
             cval = float(coupon.get("discount", 0))
-            discount = round((subtotal * cval) / 100.0, 2)
+            raw_discount = round((subtotal * cval) / 100.0, 2)
+            if max_discount is not None and max_discount > 0 and raw_discount > max_discount:
+                discount = max_discount
+            else:
+                discount = raw_discount
             delivery_discount = 0.0
         elif ctype == "fixed":
             cval = float(coupon.get("discount", 0))
-            discount = min(cval, subtotal)
+            raw_discount = min(cval, subtotal)
+            if max_discount is not None and max_discount > 0 and raw_discount > max_discount:
+                discount = max_discount
+            else:
+                discount = raw_discount
             delivery_discount = 0.0
 
     final_shipping_fee = max(0.0, round(original_shipping_fee - delivery_discount, 2))
@@ -247,6 +299,41 @@ async def reduce_order_inventory(order: dict, db) -> bool:
                     )
                     logger.info(f"Reduced stock_quantity for product {pid}: {p['stock_quantity']} -> {new_stock}")
 
+    return True
+
+
+async def record_coupon_usage(order: dict, db) -> bool:
+    """
+    Atomically records coupon usage in MongoDB when an order is paid or confirmed.
+    Ensures usage is incremented exactly once per order (idempotent flag: coupon_usage_recorded).
+    """
+    if not order or not db:
+        return False
+
+    order_id = order.get("id")
+    coupon_code = order.get("coupon_code")
+    if not order_id or not coupon_code or not str(coupon_code).strip():
+        return False
+
+    res = await db.orders.update_one(
+        {"id": order_id, "coupon_usage_recorded": {"$ne": True}},
+        {
+            "$set": {
+                "coupon_usage_recorded": True,
+                "coupon_usage_recorded_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+            }
+        }
+    )
+    if res.modified_count == 0:
+        logger.info(f"Coupon usage already recorded for Order #{order_id}. Skipping duplicate increment.")
+        return False
+
+    code_clean = str(coupon_code).strip().upper()
+    await db.coupons.update_one(
+        {"code": code_clean},
+        {"$inc": {"usedCount": 1}}
+    )
+    logger.info(f"Incremented usedCount for coupon '{code_clean}' on Order #{order_id}.")
     return True
 
 
@@ -476,6 +563,12 @@ async def verify_razorpay_payment_endpoint(payload: RazorpayPaymentVerifyRequest
         await reduce_order_inventory(updated_order, db)
     except Exception as stock_err:
         logger.warning(f"Failed to deduct inventory for verified Order #{order['id']}: {stock_err}")
+
+    # Record coupon usage exactly once
+    try:
+        await record_coupon_usage(updated_order, db)
+    except Exception as cp_err:
+        logger.warning(f"Failed to record coupon usage for verified Order #{order['id']}: {cp_err}")
 
     try:
         from app.resend_service import send_new_order_admin_notification
@@ -735,6 +828,17 @@ async def create_order(
         "updated_at": now_iso
     }
     await db.orders.insert_one(doc)
+
+    # Reduce product stock and record coupon usage for confirmed COD order
+    try:
+        await reduce_order_inventory(doc, db)
+    except Exception as stock_err:
+        logger.warning(f"Failed to deduct inventory for COD Order #{order_id}: {stock_err}")
+
+    try:
+        await record_coupon_usage(doc, db)
+    except Exception as cp_err:
+        logger.warning(f"Failed to record coupon usage for COD Order #{order_id}: {cp_err}")
 
     try:
         from app.resend_service import send_new_order_admin_notification

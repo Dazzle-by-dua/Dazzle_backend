@@ -128,10 +128,16 @@ async def handle_razorpay_webhook(
 
                 # Reduce product stock exactly once
                 try:
-                    from app.routers.orders import reduce_order_inventory
+                    from app.routers.orders import reduce_order_inventory, record_coupon_usage
                     await reduce_order_inventory(updated_order, db)
                 except Exception as stock_err:
                     logger.warning(f"Failed to deduct inventory via webhook for Order #{order['id']}: {stock_err}")
+
+                # Record coupon usage exactly once
+                try:
+                    await record_coupon_usage(updated_order, db)
+                except Exception as cp_err:
+                    logger.warning(f"Failed to record coupon usage via webhook for Order #{order['id']}: {cp_err}")
 
                 try:
                     from app.resend_service import send_new_order_admin_notification
