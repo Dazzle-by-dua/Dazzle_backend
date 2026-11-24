@@ -4,6 +4,13 @@ from pydantic import BaseModel, Field
 # ========================================================
 # 1. Product Schemas
 # ========================================================
+class ColorVariant(BaseModel):
+    color: str
+    img: str
+    images: Optional[List[str]] = Field(default_factory=list)
+    sku: Optional[str] = None
+    inStock: Optional[bool] = True
+
 class ProductBase(BaseModel):
     name: str
     price: float
@@ -20,6 +27,7 @@ class ProductBase(BaseModel):
     description: Optional[str] = None
     variants: Optional[List[str]] = Field(default_factory=list)
     images: Optional[List[str]] = Field(default_factory=list)
+    colorVariants: Optional[List[ColorVariant]] = Field(default_factory=list)
 
 class ProductCreate(ProductBase):
     id: Optional[int] = None
@@ -40,6 +48,7 @@ class ProductUpdate(BaseModel):
     description: Optional[str] = None
     variants: Optional[List[str]] = None
     images: Optional[List[str]] = None
+    colorVariants: Optional[List[ColorVariant]] = None
 
 class ProductStockUpdate(BaseModel):
     inStock: bool

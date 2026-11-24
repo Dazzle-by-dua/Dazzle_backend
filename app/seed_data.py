@@ -23,6 +23,23 @@ DEFAULT_PRODUCTS = [
         "dimensions": "Pendant 18mm x 18mm | Chain length: 42cm + 5cm extension",
         "description": "An ode to blooming elegance, this Flower Pendant Necklace features delicately sculpted petals set with shimmering pavé accents, culminating in a radiant freshwater pearl at the center. Hand-crafted and finished in our signature 18K champagne gold vermeil.",
         "variants": ["18K Champagne Gold", "Rose Gold Vermeil", "Sterling Silver"],
+        "colorVariants": [
+            {
+                "color": "18K Champagne Gold",
+                "img": "product_flower_necklace.jpg",
+                "images": ["product_flower_necklace.jpg", "hero_necklace.jpg"]
+            },
+            {
+                "color": "Rose Gold Vermeil",
+                "img": "hero_necklace.jpg",
+                "images": ["hero_necklace.jpg", "featured_collection.jpg"]
+            },
+            {
+                "color": "Sterling Silver",
+                "img": "featured_collection.jpg",
+                "images": ["featured_collection.jpg", "product_flower_necklace.jpg"]
+            }
+        ],
         "images": ["product_flower_necklace.jpg", "hero_necklace.jpg", "featured_collection.jpg"]
     },
     {

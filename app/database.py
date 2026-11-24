@@ -292,6 +292,7 @@ class DatabaseManager:
                     "dimensions": p.get("dimensions"),
                     "description": p.get("description"),
                     "variants": list(p.get("variants", [])),
+                    "colorVariants": list(p.get("colorVariants", [])),
                     "images": list(p.get("images", [])),
                     "created_at": now_iso,
                     "updated_at": now_iso
@@ -551,6 +552,7 @@ async def import_all_data(data: Dict[str, Any]) -> bool:
                     "dimensions": p.get("dimensions"),
                     "description": p.get("description"),
                     "variants": list(p.get("variants", [])),
+                    "colorVariants": list(p.get("colorVariants", [])),
                     "images": list(p.get("images", [])),
                     "created_at": now_iso,
                     "updated_at": now_iso

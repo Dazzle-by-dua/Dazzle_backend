@@ -54,6 +54,7 @@ async def get_product_details_map():
             "dimensions": p.get("dimensions") or "Standard Fine Jewellery Sizing",
             "sku": p.get("sku") or f"DBD-{p['id']}",
             "variants": p.get("variants") or ["18K Champagne Gold"],
+            "colorVariants": p.get("colorVariants") or [],
             "images": p.get("images") if p.get("images") else [p.get("img"), "featured_collection.jpg"]
         }
     return details_map
@@ -78,7 +79,11 @@ async def add_product(payload: ProductCreate, admin: dict = Depends(get_current_
         pid = (last[0]["id"] + 1) if last else 1
 
     sku = payload.sku or f"DBD-{payload.category[:2].upper()}-{str(pid).zfill(3)}"
-    variants = payload.variants if payload.variants else ["18K Champagne Gold"]
+    color_variants = [v.model_dump() for v in payload.colorVariants] if payload.colorVariants else []
+    if color_variants and not payload.variants:
+        variants = [v["color"] for v in color_variants]
+    else:
+        variants = payload.variants if payload.variants else ["18K Champagne Gold"]
     images = payload.images if payload.images else ([payload.img] if payload.img else ["product_flower_necklace.jpg"])
 
     doc = {
@@ -97,6 +102,7 @@ async def add_product(payload: ProductCreate, admin: dict = Depends(get_current_
         "dimensions": payload.dimensions,
         "description": payload.description,
         "variants": list(variants),
+        "colorVariants": color_variants,
         "images": list(images),
         "created_at": now_iso,
         "updated_at": now_iso
@@ -115,6 +121,10 @@ async def update_product(product_id: int, payload: ProductUpdate, admin: dict = 
 
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     update_data = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    if "colorVariants" in update_data and update_data["colorVariants"] is not None:
+        update_data["colorVariants"] = [v.model_dump() if hasattr(v, "model_dump") else v for v in update_data["colorVariants"]]
+        if "variants" not in update_data or not update_data["variants"]:
+            update_data["variants"] = [cv["color"] for cv in update_data["colorVariants"] if isinstance(cv, dict) and "color" in cv]
     update_data["updated_at"] = now_iso
 
     await db.products.update_one({"id": product_id}, {"$set": update_data})
